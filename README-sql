@@ -1,0 +1,26 @@
+hynsphax requires two different databases for operation.
+
+The first one is the central configuration database, which must be available to
+all HylaFAX and netsapiens servers. Testing was performed using mariadb; a
+sample schema is available in the sql subdirectory in the file
+config-mariadb.sql which will create the necessary tables. Any perl DBI
+compatible database can be used for this purpose as long as you create
+compatible tables using whatever syntax is required. A username/password
+providing full access to these tables will be necessary and utilized during the
+configuration process. Depending on your database selection, you might also
+need to configure necessary access for the various IP addresses of the servers
+that are in the deployment.
+
+The second is the local queuing database, which exists separately on each
+HylaFAX server. It is recommended to use sqlite for these instances, and a
+sample schema named queue-sqlite.sql is available in the sql subdirectory. The
+following commands can be used to initialize the queue database on each HylaFAX
+server:
+
+	sqlite3 /var/spool/hylafax/config/hynsphax/queue.db < sql/queue-sqlite.sql
+	chown hylafax:apache /var/spool/hylafax/config/hynsphax/queue.db
+	chmod 660 /var/spool/hylafax/config/hynsphax/queue.db
+
+
+Again, any DBI compatible database can be used for the local queuing database,
+as long as the appropriate tables are created as necessary for your selection.

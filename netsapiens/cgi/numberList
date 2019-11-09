@@ -1,0 +1,147 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use LWP::UserAgent ();
+use POSIX ();
+use Unix::Syslog ();
+
+require '/etc/netsapiens/hynsphax.conf';
+require '/var/www/hynsphax/lib/hynsphax-common.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-numberList', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $q = new CGI();
+
+my ($api_key, $api_secret) = cgi_auth($q);
+
+my $country_code = $q->param('country_code');
+_logd("country_code = $country_code") if defined($country_code);
+
+my $area_code = $q->param('area_code');
+_logd("area_code = $area_code") if defined($area_code);
+
+# not in phaxio API, but used by Netsapiens?
+my $subscriber = $q->param('subscriber');
+_logd("subscriber = $subscriber") if defined($subscriber);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail('internal error', 'failed to connect to config db');
+
+my $number_qh = query($dbh_config, 'select number, city, state, cost, destinations,' .
+				   'provision_date from fax order by number');
+$number_qh or
+	cgi_fail('internal error', 'failed to execute number query');
+
+print "Content-type: application/json\n\n";
+print '{"success":true,';
+print '"message":"Retrieved user phone numbers successfully",';
+
+my @return_numbers;
+
+my ($number, $city, $state, $cost, $destinations, $provision_date);
+while (($number, $city, $state, $cost, $destinations, $provision_date) =
+	$number_qh->fetchrow_array()) {
+	_logd("row = $number, " . (defined($city) ? $city : '') . ', ' .
+	      (defined($city) ? $city : '') . ', ' .
+	      (defined($state) ? $state : '') . ', ' .
+	      (defined($cost) ? $cost : '') . ', ' . 
+	      (defined($destinations) ? $destinations : '') . ', ' . "$provision_date");
+
+	next if ($number eq 'default');
+
+	if (defined($country_code) && $number !~ /^i\Q$country_code\E/) {
+		_logd("$country_code doesn't match, skipping");
+		next;
+	}
+
+	if (defined($area_code) && $number !~ /^\+1$area_code/) {
+		_logd("$area_code doesn't match, skipping");
+		next;
+	}
+
+	my ($ns_user, $ns_domain, $ns_host);
+	if ($destinations =~ /netsapiens:([^\|;]+)/) {
+		my $handler_options = $1;
+		_logd("found netsapiens destination - $handler_options");
+
+		foreach my $h_opt (split(/,/, $handler_options)) {
+			my ($opt, $value) = split(/=/, $h_opt);
+			$ns_domain = $value if $opt eq 'domain';
+			$ns_user = $value if $opt eq 'user';
+			$ns_host = $value if $opt eq 'host';
+		}
+
+		_log("warning: ns_host not defined") unless defined($ns_host);
+		_log("warning: ns_domain not defined") unless defined($ns_domain);
+		_log("warning: ns_user not defined") unless defined($ns_user);
+
+		if (defined($subscriber) && $subscriber ne "$ns_user\@$ns_domain") {
+			_logd("subscriber mismatch, skipping");
+			next;
+		}
+	}
+
+	if (hynsphax_config('number_strip_plus') && $number =~ /^\+1\d{10}$/) {
+		_logd("removing leading + from fax number");
+		$number =~ s/^\+//;
+	}
+	my $number_json = '{"number":"' . json_escape($number) . '",';
+
+	if (defined($city)) {
+		$number_json .= '{"city":"' . json_escape($city) . '",';
+	}
+
+	if (defined($state)) {
+		$number_json .= '{"state":"' . json_escape($city) . '",';
+	}
+
+	if (defined($cost)) {
+		$number_json .= '{"cost":"' . json_escape($cost) . '",';
+	}
+
+	$number_json .= '"provisioned_at":"' .
+		POSIX::strftime("%D %I:%M %p", localtime($provision_date)) . '"';
+
+
+	if (defined($ns_host) && defined($ns_domain) && defined($ns_user)) {
+		my $callback_url = "http://$ns_host/ns-api/?object=phaxio&action=create&" .
+				   "domain=$ns_domain&uid=$ns_user\@$ns_domain";
+		$number_json .= ',"callback_url":"' . json_escape($callback_url);
+	}
+
+	$number_json .= '"}';
+
+	push(@return_numbers, $number_json);
+}
+
+if (@return_numbers) {
+	print '"data":[';
+	print join(',', @return_numbers);
+	print ']';
+}
+
+print '}';
+
+_logd("request completed");
+
+exit(0);

@@ -1,0 +1,145 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use LWP::UserAgent ();
+use Sys::Hostname ();
+use Unix::Syslog ();
+
+require '/etc/netsapiens/hynsphax.conf';
+require '/var/www/hynsphax/lib/hynsphax-common.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-send', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $hostname = Sys::Hostname::hostname();
+
+my $q = new CGI();
+
+my ($api_key, $api_secret) = cgi_auth($q);
+
+my %post_content = ( api_key => $api_key, api_secret => $api_secret);
+
+# required parameters
+if (defined($q->param('to'))) {
+	$post_content{to} = $q->param('to');
+	_logd("to = $post_content{to}");
+	$q->delete('to');
+}
+else {
+	cgi_fail('You must provide a recipient phone number.', 'no to supplied');
+}
+
+if (defined($q->param('filename'))) {
+	my $fh = $q->param('filename');
+	$post_content{filename} = [ $fh->filename() ];
+	_logd("filename = $post_content{filename}->[0]");
+	$q->delete('filename')
+}
+else {
+	cgi_fail('You must submit at least one file.', 'no filename supplied');
+}
+
+# optional parameters
+foreach (qw(callback_url caller_id)) {
+	if (defined($q->param($_))) {
+		$post_content{$_} = $q->param($_);
+		_logd("$_ = $post_content{$_}");
+		$q->delete($_);
+	}
+}
+
+# unsupported parameters
+foreach (qw(header_text string_data string_data_type batch batch_delay batch_collision_avoidance
+	    cancel_timeout test_fail)) {
+	if (defined($q->param($_))) {
+		_log("warning: $_ param not currently supported");
+		$post_content{$_} = $q->param($_);
+		_logd("$_ = $post_content{$_}");
+		$q->delete($_);
+	}
+}
+
+foreach ($q->param()) {
+	if (/^tag\[/) {
+		_log("warning: $_ param not currently supported");
+		$post_content{$_} = $q->param($_);
+		_logd("$_ = $post_content{$_}");
+	}
+}
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail('internal error', 'failed to connect to config db');
+
+my $node_qh = query($dbh_config,
+		    'select hy_node_order from ns_servers where hostname = ?', $hostname);
+$node_qh or
+	cgi_fail('internal error', 'failed to execute node query');
+
+my ($node_order) = $node_qh->fetchrow_array();
+defined($node_order) or
+	cgi_fail('internal error', "no node list found for host $hostname");
+
+my ($hostname_qh) = query($dbh_config,
+		          'select hostname from hy_servers where node_id = ?');
+$hostname_qh or
+	cgi_fail('internal error', 'failed to prepare hostname query');
+
+my $ua = LWP::UserAgent->new(timeout => 60);
+
+my $response;
+
+foreach my $node_id (split(/,/, $node_order)) {
+
+	$node_qh = query($dbh_config, $hostname_qh, $node_id);
+	$node_qh or
+		cgi_fail('internal error', 'failed to execute hostname query');
+
+	my ($hy_server) = $node_qh->fetchrow_array();
+	defined($hy_server) or
+		cgi_fail('internal error', "no hylafax server found for node_id $node_id");
+
+	_logd("trying node $node_id hostname $hy_server");
+
+	# should be https but http for testing
+	$response = $ua->post("http://$hy_server/cgi-bin/hynsphax-send",
+				  Content_Type => 'form-data',
+				  Content => [ %post_content ]);
+
+	if ($response->is_success()) {
+		_logd("success, content-type " . $response->header("Content-type"));
+		print 'Content-type: ' . $response->header("Content-type") . "\n\n";
+		print $response->content();
+		exit(0);
+	}
+	else {
+		_log("warning: remote call failed - " . $response->status_line());
+		_log("failure content: " . $response->content());
+	}
+}
+
+_log("error: all remote servers failed");
+
+print "status: " . $response->status_line() . "\n";
+print 'Content-type: ' . $response->header("Content-type") . "\n\n";
+print $response->content();
+
+exit(1);

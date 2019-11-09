@@ -1,0 +1,179 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use File::Basename ();
+use Socket ();
+use Sys::Hostname ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax.conf';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $script_name = File::Basename::basename($0);
+
+my $direction;
+if ($script_name eq 'hynsphax-jobcontrol') {
+	$direction = 'out';
+}
+elsif ($script_name eq 'hynsphax-dynamicconfig') {
+	$direction = 'in';
+}
+else {
+	print STDERR "unknown invoker: $script_name\n";
+	exit(1);
+}
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog($script_name, Unix::Syslog::LOG_PID, $syslog_facility);
+
+_logd("args = " . join(',', @ARGV));
+
+my $vars;
+
+my $hostname = Sys::Hostname::hostname();
+my $ip_addr = Socket::inet_ntoa((gethostbyname($hostname))[4]);
+if (!$ip_addr) {
+	_log("warning: ip address not found, using hostname $hostname");
+	$ip_addr = $hostname;
+}
+
+_logd("ip address $ip_addr");
+$vars->{IP_ADDR} = $ip_addr;
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+if (!$dbh_config) {
+	_log("error: failed to connect to config database");
+	exit(1);
+}
+
+my $device;
+my $caller_id;
+my $fax_num;
+my $job_id;
+my %job_params;
+
+if ($direction eq 'in') {
+	$device = $ARGV[0];
+	_logd("device $device");
+
+	$caller_id = $ARGV[1];
+	_logd("caller_id $caller_id");
+	$vars->{CALLER_ID} = $caller_id;
+
+	$fax_num = $ARGV[2];
+	_logd("fax_num $fax_num")
+}
+else {
+	$job_id = $ARGV[0];
+	_logd("job id $job_id");
+
+	open(QF, "</var/spool/hylafax/sendq/q$job_id") or do {
+		_log("error: failed to open sendq/q$job_id - $!");
+		exit(1);
+	};
+
+	while (<QF>) {
+		chomp;
+		my ($param, $value) = split(/:/);
+		_logd("job param $param = $value");
+		$job_params{$param} = $value;
+	}
+
+	close(QF);
+
+	$fax_num = $job_params{tsi};
+	_logd("fax_num $fax_num");
+
+	my $name_qh = query($dbh_config, "select name from fax where number = ?", $fax_num);
+	if (!$name_qh) {
+		_log("error: failed to execute name search");
+		exit(1);
+	}
+
+	my ($name) = $name_qh->fetchrow_array();
+
+	$vars->{NAME} = $name if defined($name);
+}
+
+if ($fax_num) {
+	$vars->{FAX_NUM} = $fax_num;
+}
+else {
+	_log("error: no fax number found for job");
+	exit(1);
+}
+
+my ($job_opts_qh) = query($dbh_config, "select hy_job_opts, hy_job_opts_$direction from fax where " .
+				     "number = ?");
+if (!$job_opts_qh) {
+	_log("error: failed to prepare job option query handle");
+	exit(1);
+}
+
+my %job_opts;
+
+foreach my $number ('default', $fax_num) {
+	$job_opts_qh = query($dbh_config, $job_opts_qh, $number);
+	if (!$job_opts_qh) {
+		_log("error: failed to search for $number job options");
+		exit(1);
+	}
+
+	my ($job_opts, $job_opts_d) = $job_opts_qh->fetchrow_array();
+	$job_opts //= ''; $job_opts_d //= '';
+	_logd("$number job opts = $job_opts");
+	_logd("$number job opts $direction = $job_opts_d");
+
+	foreach my $jo (split/\^/, $job_opts) {
+		my ($opt, $val) = split(/=/, $jo, 2);
+
+		$val = var_swap($vars, $val);
+
+		if (!exists($job_opts{$opt})) {
+			_logd("setting $opt = $val");
+		}
+		else {
+			_logd("overwriting $opt = $val");
+		}
+
+		$job_opts{$opt} = $val;
+	}
+
+	foreach my $jo (split/\^/, $job_opts_d) {
+		my ($opt, $val) = split(/=/, $jo, 2);
+
+		$val = var_swap($vars, $val);
+
+		if (!exists($job_opts{$opt})) {
+			_logd("setting $direction $opt = $val");
+		}
+		else {
+			_logd("overwriting $direction $opt = $val");
+		}
+
+		$job_opts{$opt} = $val;
+	}
+}
+
+foreach my $jo (sort keys %job_opts) {
+	print "${jo}: \"$job_opts{$jo}\"\n";
+}
+
+exit;

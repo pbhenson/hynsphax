@@ -1,0 +1,89 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use LWP::UserAgent ();
+use Unix::Syslog ();
+
+require '/etc/netsapiens/hynsphax.conf';
+require '/var/www/hynsphax/lib/hynsphax-common.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-faxFile', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $q = new CGI();
+
+my ($api_key, $api_secret) = cgi_auth($q);
+
+my $id = $q->param('id');
+defined($id) or cgi_fail('You must provide a fax id', 'no id supplied');
+
+my $node;
+if ($id =~ /^(\d{2})(\d+)$/) {
+	$node = $1;
+	$id = $2;
+}
+else {
+	cgi_fail('invalid id parameter', "%s - $id");
+}
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail('internal error', 'failed to connect to config db');
+
+my $server_qh = query($dbh_config, 'select hostname from hy_servers where node_id = ?', $node);
+$server_qh or
+	cgi_fail('internal error', 'failed to execute server query');
+
+my ($server) = $server_qh->fetchrow_array();
+defined($server) or
+	cgi_fail('internal error', 'no server found for node $node');
+
+my $type = $q->param('type'); $type //= 'p';
+$type =~ /^(p|l|s)$/ or
+	cgi_fail('invalid type parameter', "%s $type");
+
+_logd("connecting to $server for id $id type $type");
+
+my $ua = LWP::UserAgent->new(timeout => 60);
+
+# should be https but http for testing
+my $response = $ua->post("http://$server/cgi-bin/hynsphax-faxFile", Content_Type => 'form-data',
+			 Content => [ id => $id,
+				      type => $type,
+				      api_key => $api_key,
+				      api_secret => $api_secret ]);
+
+if (!$response->is_success()) {
+	_log("error: remote call failed - " . $response->status_line());
+	_log("failure content: " . $response->content());
+	print "status: " . $response->status_line() . "\n";
+	print 'Content-type: ' . $response->header("Content-type") . "\n\n";
+	print $response->content();
+}
+else {
+	_logd("success, content-type " . $response->header("Content-type"));
+	print 'Content-type: ' . $response->header("Content-type") . "\n\n";
+	print $response->content();
+}
+
+_logd("request completed");
+
+exit(0);

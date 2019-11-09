@@ -1,0 +1,523 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use File::Basename ();
+use LWP::UserAgent ();
+use Sys::Hostname ();
+use Unix::Syslog ();
+use URI::Escape;
+
+my $now = time();
+
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax.conf';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-faxrcvd', Unix::Syslog::LOG_PID, $syslog_facility);
+
+# set umask so web server can read generated fax files
+umask(0027);
+
+my $hostname = Sys::Hostname::hostname();
+
+my $hf_dir = '/var/spool/hylafax';
+my $hf_conf = read_hf_config();
+
+# define routing for destination handlers
+my $dest_handlers = {
+	# generate phaxio compatible callback to a netsapiens server
+	netsapiens => \&netsapiens_hander,
+	# dump on floor
+	null => sub { return 1; },
+};
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+if (!$dbh_config) {
+	_logp("error: failed to connect to config database");
+	exit(1);
+}
+
+my $dbh_queue = dbi_connect(hynsphax_config('db_queue_list'));
+if (!$dbh_queue) {
+	_logp("error: failed to connect to config database");
+	exit(1);
+}
+
+# look up our server node identifier
+my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
+if (!$node_qh) {
+	_logp("error: failed to look up server node");
+	exit(1);
+}
+
+my ($node_id) = $node_qh->fetchrow_array();
+if (!defined($node_id)) {
+	_logp("error: node id for server $hostname not found");
+	exit(1);
+}
+_logd("server $hostname node_id $node_id");
+
+my $retval;
+
+if (@ARGV == 1 && $ARGV[0] eq '--process-queue') {
+	_logd("processing queued inbound fax deliveries");
+
+	if (mkdir('/var/spool/hylafax/tmp/faxrcvd-queue.lock')) {
+		$retval = process_queue();
+		if (!rmdir('/var/spool/hylafax/tmp/faxrcvd-queue.lock')) {
+			_log("error: failed to remove queue lockfile - $!");
+			$retval = 1;
+		}
+	}
+	else {
+		if ($! == 17) { # EEXIST
+			_log("warning: queue lockfile exists, skipping run");
+			$retval = 0;
+		}
+		else {
+			_log("error: failed to create queue lockfile - $!");
+			$retval = 1;
+		}
+	}
+}
+elsif (@ARGV >= 4) {
+	_logd("processing realtime inbound fax delivery - " . join(' ', @ARGV));
+
+	$retval = process_fax(@ARGV);
+}
+else {
+	print "Usage:\n";
+	print "\t$0 file devID commID error-msg [ callID-1 [ callID-2 [ ... [ callID-n ] ] ] ]\n";
+	print "\t$0 --process-queue\n";
+
+	_log('error: bad arguments - ' . join(' ', @ARGV));
+
+	$retval = 1;
+}
+
+_logd("processing complete");
+
+exit($retval);
+
+sub process_fax {
+	my $file = $hf_dir . '/' . shift;
+	my $filename = File::Basename::basename($file,  ".tif");
+	my $id = $filename;
+	$id =~ s/^fax//;
+	my $device = shift;
+	my $commid = shift;
+	my $msg = shift;
+	my $cid_from = shift;
+	my $cid_to = shift;
+	my @cidextra = @_;
+
+	if (! -f $file) {
+		_logp("error: file $file not found");
+		return 1;
+	}
+
+	_logd("reading faxinfo from $file");
+	my $faxinfo;
+	my ($status, $output) = read_pipe($hf_conf->{INFO}, '-n', $file);
+
+	if ($status < 0) {
+		_logp("error: faxinfo failed to execute");
+		return 1;
+	}
+	elsif ($status != 1) {
+		_logp("error: faxinfo on $file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return 1;
+	}
+	else {
+		foreach (@{$output}) {
+			if (/^\s*([^:]+): (.*)$/) {
+				_logd("faxinfo: $1 = $2");
+				$faxinfo->{$1} = $2;
+			}
+			else {
+				_log("warning: unexpected output from faxinfo - $_");
+			}
+		}
+
+		if (keys(%{$faxinfo}) < 1) {
+			_logp("error: faxinfo on $file returned no data");
+			return 1;
+		}
+	}
+
+	_logd("generating pdf");
+	($status, $output) = read_pipe($hf_conf->{TIFF2PDF}, '-o',
+				       "$hf_dir/recvq-pdf/$filename.pdf", $file);
+
+	if ($status < 0) {
+		_logp("error: tiff2pdf failed to execute");
+		return 1;
+	}
+	elsif ($status != 1) {
+		_logp("error: tiff2pdf on $file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return 1;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from faxinfo - $_");
+		}
+	}
+
+	_logd("generating small jpeg preview");
+	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", '-density', '72',
+				       '-resize', '129x167', "$hf_dir/recvq-pdf/$filename-s.jpg");
+
+	if ($status < 0) {
+		_logp("error: convert (small) failed to execute");
+		return 1;
+	}
+	elsif ($status != 1) {
+		_logp("error: convert (small) on $file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return 1;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from convert (small) - $_");
+		}
+	}
+
+	_logd("generating large jpeg preview");
+	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", '-density', '72',
+				       '-resize', '300x388', "$hf_dir/recvq-pdf/$filename-l.jpg");
+
+	if ($status < 0) {
+		_logp("error: convert (large) failed to execute");
+		return 1;
+	}
+	elsif ($status != 1) {
+		_logp("error: convert (large) on $file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return 1;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from convert (large) - $_");
+		}
+	}
+
+
+	_logd("querying destinations for $cid_to");
+	my ($fax_qh) = query($dbh_config, 'select destinations from fax where number = ?');
+	if (!$fax_qh) {
+		_logp("error: failed to prepare fax destination query");
+		return 1;
+	}
+
+	$status = query($dbh_config, $fax_qh, $cid_to);
+	if (!$status) {
+		_logp("error: failed to look up destination for $cid_to");
+		return 1;
+	}
+
+	my ($dest_list) = $fax_qh->fetchrow_array();
+	if (!$dest_list) {
+		_log("warning: destination for $cid_to not found, checking for default");
+		$status = query($dbh_config, $fax_qh, 'default');
+		if (!$status) {
+			_logp("error: failed to lookup default destination");
+			return 1;
+		}
+		($dest_list) = $fax_qh->fetchrow_array();
+		if (!$dest_list) {
+			_logp("error: no destinations for $cid_to found");
+			return 1;
+		}
+	}
+	_logd("found destinations $dest_list");
+
+	my ($fail_qh) = query($dbh_queue, 'insert into inbound ' .
+					  '(id, received_time, pages, cid_from, cid_to, destination, ' .
+					  'retry_count, retry_time) values ' .
+					  '(?, ?, ?, ?, ?, ?, 0, ?)');
+	if (!$fail_qh) {
+		_logp("error: failed to prepare fail query");
+		return 1;
+	}
+
+	foreach my $dest (split(/;/, $dest_list)) {
+		_logd("processing destination $dest");
+		my $status = process_dest($id, $now, $faxinfo->{Pages}, $cid_from, $cid_to, $dest);
+
+		if (!$status) {
+			_logd("all destination options failed, queueing for retry");
+
+			$status = query($dbh_queue, $fail_qh, $id, $now, $faxinfo->{Pages},
+					$cid_from, $cid_to, $dest, $now);
+
+			if (!$status) {
+				_log("error: failed to insert ($id, $now, $faxinfo->{Pages}, " .
+				     "$cid_from, $cid_to, $dest, $now) into inbound queue");
+			}
+		}
+	}
+
+	return 0;
+}
+
+sub process_queue {
+	my $retry_backoff = hynsphax_config('inbound_retry_backoff');
+	if (!defined($retry_backoff)) {
+		_logp("error: no inbound_retry_backoff configured");
+		return 1;
+	}
+
+	my ($remove_qh) = query($dbh_queue, 'delete from inbound where ' .
+					     'id = ? and destination = ?');
+	if (!$remove_qh) {
+		_logp("error: failed to prepare remove query");
+		return 1;
+	}
+
+	my ($retry_qh) = query($dbh_queue, 'update inbound set retry_count = ?, retry_time = ? ' .
+					   'where id = ? and destination = ?');
+	if (!$retry_qh) {
+		_logp("error: failed to prepare retry query");
+		return 1;
+	}
+
+	my $inbound_qh = query($dbh_queue, 'select id, received_time, pages, cid_from, cid_to, '.
+					   'destination, retry_count, retry_time from inbound');
+
+	if (!$inbound_qh) {
+		_logp("error: failed to query inbound queue");
+		return 1;
+	}
+
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $dest, $retry_count, $retry_time);
+	while (($id, $received_time, $pages, $cid_from, $cid_to, $dest,
+		$retry_count, $retry_time) = $inbound_qh->fetchrow_array()) {
+
+		_logd("queue entry $id, $received_time, $pages, $cid_from, $cid_to, " .
+		     "$dest, $retry_count, $retry_time");
+
+		$retry_count++;
+
+		my $delay = 0;
+		foreach (@{$retry_backoff}) {
+			if ($retry_count <= $_->[0]) {
+				$delay = $_->[1];
+				_logd("found delay $delay for retry $retry_count");
+				last;
+			}
+		}
+
+		my $status;
+		if (!$delay) {
+			_logd("retry $retry_count count exceeded");
+		}
+		elsif ($now - $retry_time <= $delay) {
+			_logd("retry delay not met");
+			next;
+		}
+		else {
+			_logd("retrying $dest");
+			$status = process_dest($id, $received_time, $pages, $cid_from, $cid_to, $dest);
+			if (!$status) {
+				_logd("retry failed, updating queue entry");
+
+				$status = query($dbh_queue, $retry_qh, $retry_count, $now,
+						$id, $dest);
+				if (!$status) {
+					_log("error: failed to update ($id, $dest) retry status");
+				}
+				elsif ($status->rows() != 1) {
+					_log("error: ($id, $dest) retry status not update");
+				}
+				next;
+			}
+			else {
+				 _logd("retry succeeded");
+			}
+		}
+
+		 _logd("removing from inbound queue");
+		$status = query($dbh_queue, $remove_qh, $id, $dest);
+		if (!$status) {
+			_log("error: failed to remove from inbound queue");
+		}
+		elsif ($status->rows() != 1) {
+			_log("error: not removed from inbound queue");
+		}
+	}
+
+	return 0;
+}
+
+sub read_hf_config {
+	_logd("reading hylafax config");
+
+	if (! -f "$hf_dir/etc/setup.cache") {
+		logp("error: $hf_dir/etc/setup.cache is missing");
+		exit(1)
+	};
+
+	if (!open(HF_CONF, "<$hf_dir/etc/setup.cache")) {
+		logp("error: unable to open $hf_dir/etc/setup.cache - $!");
+		exit(1);
+	}
+
+	my %hf_conf;
+
+	while (<HF_CONF>) {
+		chomp;
+		next if /^#/;
+		s/#.*//;
+		my ($var, $value) = split /=/;
+		if (defined($var) && defined ($value)) {
+			$value =~ s/^'//; $value =~ s/'$//;
+			_logd("hylafax $var = $value");
+			$hf_conf{$var} = $value;
+		}
+	}
+
+	close(HF_CONF);
+
+	if (!exists($hf_conf{INFO})) {
+		_logd("hylafax adding INFO = " . $hf_conf{SBIN} . '/faxinfo');
+		$hf_conf{INFO} = $hf_conf{SBIN} . '/faxinfo';
+	}
+	if (!exists($hf_conf{FAX2PS})) {
+		_logd("hylafax adding FAX2PS = " . $hf_conf{TIFFBIN} . '/fax2ps');
+		$hf_conf{FAX2PS} = $hf_conf{TIFFBIN} . '/fax2ps';
+	}
+	if (!exists($hf_conf{TIFF2PS})) {
+		_logd("hylafax adding TIFF2PS = " . $hf_conf{TIFFBIN} . '/tiff2ps');
+		$hf_conf{TIFF2PS} = $hf_conf{TIFFBIN} . '/tiff2ps';
+	}
+	if (!exists($hf_conf{TIFFINFO})) {
+		_logd("hylafax adding TIFFINFO = " . $hf_conf{TIFFBIN} . '/tiffinfo');
+		$hf_conf{TIFFINFO} = $hf_conf{TIFFBIN} . '/tiffinfo';
+	}
+
+	return \%hf_conf;
+}
+
+sub process_dest {
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $dest) = @_;
+
+	my $status = 0;
+
+	foreach my $dest_option (split(/\|/, $dest)) {
+		_logd("trying destination $dest_option");
+
+		my ($label, $options) = split(/:/, $dest_option);
+
+		if (exists($dest_handlers->{$label})) {
+			_logd("calling handler for $label");
+			$status = $dest_handlers->{$label}->($id, $received_time, $pages,
+							     $cid_from, $cid_to, $options);
+			if ($status) {
+				_logd("destination successful");
+				last;
+			}
+			else {
+				_logd("destination failed");
+			}
+		}
+		else {
+			_log("error: no handler found for destination type $label");
+		}
+	}
+
+	return $status;
+}
+
+my $ua;
+
+sub netsapiens_hander {
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
+
+	my $options;
+	foreach my $h_opt (split(/,/, $handler_options)) {
+		my ($opt, $value) = split(/=/, $h_opt);
+
+		_logd("netsapiens_hander: $opt = $value");
+		$options->{$opt} = $value;
+	}
+	
+	if (!ref($ua)) {
+		$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
+	}
+
+	my $url = 'https://' . $options->{host} . '/ns-api/?object=phaxio&action=create&domain=';
+	$url .= uri_escape($options->{domain}) . '&uid=';
+	$url .= uri_escape($options->{user}) . '@' . uri_escape($options->{domain});
+	_logd("url = $url");
+
+	my $ns_id = "${node_id}${id}";
+
+	my $fax_json_template = '{"id":"%s","num_pages":%s,"cost":0,' .
+				'"direction":"received","status":"success",' .
+				'"is_test":false,"requested_at":%s,"completed_at":%s,' .
+				'"from_number":"%s","to_number":"%s"}';
+
+	my $fax_json = sprintf($fax_json_template, json_escape($ns_id), json_escape($pages),
+			       json_escape($received_time), json_escape($now), json_escape($cid_from),
+			       json_escape($cid_to));
+	_logd("fax json = $fax_json");
+
+	my $response;
+	eval {
+		$response = $ua->post($url, Content_Type => 'form-data',
+				       Content => [
+							fax => $fax_json,
+							direction => 'received',
+							is_test => 'false',
+							success => 'true',
+							filename => [ "$hf_dir/recvq-pdf/fax${id}.pdf" ],
+						  ]);
+	};
+
+	if ($@) {
+		_log("error: phaxio notify post to $options->{host} failed - $@");
+		return 0;
+	}	
+
+	if (!$response->is_success()) {
+		_log("error: phaxio notify to $options->{host} failed - " . $response->status_line());
+		_logd("failure content - " . $response->content());
+		return 0;
+	}
+	elsif ($response->code() != 202) {
+		_logd("warning: phaxio notify status " . $response->code() . " != 202");
+	}
+	else {
+		_logd("phaxio notify successful");
+	}
+
+	return 1;
+}
+

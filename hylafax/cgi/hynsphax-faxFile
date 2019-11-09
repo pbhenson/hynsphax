@@ -1,0 +1,79 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use CGI ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax.conf';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-faxFile', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $q = new CGI();
+
+cgi_auth($q);
+
+my $id = $q->param('id');
+defined($id) or
+	cgi_fail('You must provide a fax id', 'no fax id found');
+
+my $type = $q->param('type'); $type //= 'p';
+$type =~ /^(p|l|s)$/ or
+	cgi_fail('invalid type parameter', "%s - $type");
+
+_logd("called with id = $id, type = $type");
+
+my $file = "/var/spool/hylafax/recvq-pdf/fax${id}";
+if ($type eq 'p') {
+	$file .= '.pdf';
+}
+else {
+	$file .= "-${type}.jpg";
+}
+
+if (! -f $file) {
+	cgi_fail('Fax with this ID does not exist', "%s - $file");
+}
+else {
+	open(FH, "<$file") or
+		cgi_fail('Internal error', "failed to open $file - $!");
+
+	print "Content-type: " . ($type eq 'p' ? 'application/pdf' : 'image/jpeg') . "\n\n";
+
+	my $status;
+	while (1) {
+		my $data;
+		$status = read(FH, $data, 1024);
+		if ($status) {
+			print $data;
+		}
+		else {
+			last;
+		}
+	}
+
+	defined($status) or _log("error: read failed - $!");
+
+	close(FH);
+
+	logd('request completed');
+}
+
+exit(0);

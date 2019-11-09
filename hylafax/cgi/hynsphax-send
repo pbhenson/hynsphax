@@ -1,0 +1,246 @@
+#! /usr/bin/perl
+#
+# Copyright 2019 Paul B. Henson <henson@acm.org>
+# 
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# Please see the LICENSE file for further details, or visit the URL
+# 
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use File::LibMagic ();
+use File::Temp ();
+use LWP::UserAgent ();
+use Sys::Hostname ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax.conf';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-send', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $hostname = Sys::Hostname::hostname();
+
+my $q = new CGI();
+
+cgi_auth($q);
+
+my %params;
+
+# required parameters
+if (defined($q->param('to'))) {
+	$params{to} = $q->param('to');
+	_logd("to = $params{to}");
+	$q->delete('to');
+}
+else {
+	cgi_fail('You must provide a recipient phone number.', 'no to supplied');
+}
+
+if (defined($q->param('caller_id'))) {
+	$params{caller_id} = $q->param('caller_id');
+	_logd("caller_id = $params{caller_id}");
+	$q->delete('caller_id');
+
+	if ($params{caller_id} =~ /^\d{10}$/) {
+		$params{caller_id} = '1' . $params{caller_id};
+		_logd("updated caller_id = $params{caller_id}");
+	}
+	if ($params{caller_id} =~ /^1\d{10}$/) {
+		$params{caller_id} = '+' . $params{caller_id};
+		_logd("updated caller_id = $params{caller_id}");
+	}
+}
+else {
+	cgi_fail('You must provide a source phone number.', 'no caller_id supplied');
+}
+
+if (defined($q->param('filename'))) {
+	my $fh = $q->param('filename');
+	$params{filename} = $q->tmpFileName($fh);
+	_logd("filename = $params{filename}");
+	$q->delete('filename')
+}
+else {
+	cgi_fail('You must submit at least one file.', 'no filename supplied');
+}
+
+# optional parameters
+foreach (qw(callback_url)) {
+	if (defined($q->param($_))) {
+		$params{$_} = $q->param($_);
+		_logd("$_ = $params{$_}");
+		$q->delete($_);
+	}
+}
+
+# unsupported parameters
+foreach (qw(header_text string_data string_data_type batch batch_delay batch_collision_avoidance
+	    cancel_timeout test_fail)) {
+	if (defined($q->param($_))) {
+		$params{$_} = $q->param($_);
+		_logd("$_ = $params{$_}");
+		_log("warning: $_ param not currently supported");
+		$q->delete($_);
+	}
+}
+
+foreach ($q->param()) {
+	if (/^tag\[/) {
+		$params{$_} = $q->param($_);
+		_logd("$_ = $params{$_}");
+		_log("warning: $_ param not currently supported");
+	}
+}
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail('internal error', 'failed to connect to config db');
+
+my $caller_id_qh = query($dbh_config, 'select number from fax where number = ?', $params{caller_id});
+$caller_id_qh or
+	cgi_fail('internal error', 'failed to validate caller_id');
+
+my $caller_id = $caller_id_qh->fetchrow_array();
+$caller_id eq $params{caller_id} or
+	cgi_fail('invalid number', "caller_id $params{caller_id} not found");
+
+my $dbh_queue = dbi_connect(hynsphax_config('db_queue_list'));
+$dbh_queue or
+	cgi_fail('internal error', 'failed to connect to queue db');
+
+# look up our server node identifier
+my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
+$node_qh or
+	cgi_fail('internal error', 'failed to look up server node');
+
+my ($node_id) = $node_qh->fetchrow_array();
+defined($node_id) or
+	cgi_fail('internal error', "node id for server $hostname not found");
+
+_logd("server $hostname node_id $node_id");
+
+my $mime_type_config = hynsphax_config('mime_type_config');
+defined($mime_type_config) or
+	cgi_fail('internal error', 'failed to load mime_type_config');
+
+my $magic = File::LibMagic->new();
+my $mime_type = $magic->checktype_filename($params{filename});
+$mime_type =~ s/;.*//;
+_logd("mime type = " . $mime_type);
+
+exists($mime_type_config->{$mime_type}) or
+	cgi_fail("file type $mime_type not supported", '%s');
+
+my ($mime_processor, $mime_options) = @{$mime_type_config->{$mime_type}};
+_logd("mime processor = " . $mime_processor);
+
+my $tmpdir;
+if ($mime_processor ne 'hylafax') {
+	$tmpdir = File::Temp->newdir();
+
+	my $vars = { F => $params{filename},
+		     D => $tmpdir,
+		};
+	
+	$mime_processor = var_swap($vars, $mime_processor);
+	
+	my @convert_cmd;
+	if (exists($mime_options->{use_shell}) && $mime_options->{use_shell} eq 'true') {
+		_logd("executing $mime_processor under shell");
+		@convert_cmd = ('/usr/bin/bash', '-c', $mime_processor);
+	}
+	else {
+		_logd("executing $mime_processor");
+		@convert_cmd = split(/\s+/, $mime_processor);
+	}
+
+	my ($status, $output) = read_pipe(@convert_cmd);
+
+	if ($status < 0) {
+		cgi_fail('internal error', "convert command $mime_processor failed to execute");
+	}
+
+	$params{filename} = <"$tmpdir/*">;
+	if ($status != 1 || (! -f $params{filename})) {
+		foreach (@{$output}) {
+			_log("\t$_");
+		}
+
+		cgi_fail('internal error', "convert command $mime_processor failed");
+	}
+	else {
+		_logd("new fax file $params{filename}");
+		foreach (@{$output}) {
+			_logd("\t$_");
+		}
+	}
+}
+
+my @sendfax_cmd = ('/usr/bin/sendfax', '-N', '-n', '-o', 'hylafax');
+push(@sendfax_cmd, '-S', $params{caller_id});
+push(@sendfax_cmd, '-d', $params{to});
+push(@sendfax_cmd, $params{filename});
+
+_logd('running ' . join(' ', @sendfax_cmd));
+
+my ($status, $output) = read_pipe(@sendfax_cmd);
+
+my $job_id;
+
+if ($status < 0) {
+	cgi_fail('internal error', "sendfax failed to execute");
+}
+elsif ($status != 1) {
+	foreach (@{$output}) {
+		_log("\t$_");
+	}
+
+	cgi_fail('internal error', "sendfax failed");
+}
+else {
+	foreach (@{$output}) {
+		if (/^request id is (\d+)/) {
+			$job_id = $1;
+			_logd("job id $job_id");
+		}
+		else {
+			_log("warning: unexpected output from sendfax - $_");
+		}
+	}
+	defined($job_id) or
+		cgi_fail('internal error', "no sendfax job id found");
+}
+
+if (defined($params{callback_url})) {
+	_logd("adding $job_id to outbound status queue");
+
+	my $queue_qh = query($dbh_queue, 'insert into outbound (id, received_time, callback_url, ' .
+					 'last_state, last_status) values (?, ?, ?, ?, ?)',
+					  $job_id, time(), $params{callback_url}, '?', 'submitted');
+
+	$queue_qh or
+		_log("error: failed to execute outbound queue query");
+}
+else {
+	_logd("no callback URL found, fire and forget");
+}
+
+print "Content-type: application/json\n\n";
+
+print '{"success":true,"message":"Fax queued for sending","faxId":' .
+       $node_id . $job_id . ',"data":{"faxId":' . $node_id . $job_id . '}}';
+
+exit(0);

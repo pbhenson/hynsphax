@@ -1,0 +1,224 @@
+Introduction
+------------
+
+hynsphax is intended to provide integration between the HylaFAX fax services
+platform (https://www.hylafax.org/) and the netsapiens SNAPsolution Unified
+Communications Platform PBX product (https://netsapiens.com/snapsolution/) by
+emulating the Phaxio API (https://www.phaxio.com/docs/api/).
+
+It was developed using the HylaFAX Enterprise product (https://www.ifax.com/)
+but would probably work with the open source edition with potentially some
+changes. It could possibly also provide access to other fax supporting software
+that implements the Phaxio client API, again potentially with some changes as
+only the minimal API functionality necessary for netsapiens has been
+implemented at this time.
+
+
+Installation/Configuration
+--------------------------
+
+hynsphax consists of several components, some of which are installed on the
+HylaFAX servers and others which are installed on the netsapiens servers.
+Please see the file INSTALL for installation prerequisites and details of the
+necessary installation steps.
+
+In addition, hynsphax requires a central shared database (such as mariadb,
+although any perl DBI compatible database server can be used) and a local
+database on each HylaFAX server (typically sqlite, although again any DBI
+compatible database will suffice). Please see the file README-sql for details
+of setting up the necessary tables in the databases.
+
+Once the installation process has been completed on all of the HylaFAX and
+netsapiens servers and the databases have been created, there are configuration
+steps to be taken on each server as well as configuration data to be added to
+the central configuration database.
+
+
+* Hylafax servers
+
+Update the file “/var/spool/hylafax/etc/config” and add the entry
+
+	JobControlCmd: bin/hynsphax-jobcontrol
+
+
+Update the file “/var/spool/hylafax/etc/CONFIG/site” and add the two entries:
+
+	DynamicConfig:	bin/hynsphax-dynamicconfig
+	UseJobTSI:	true
+
+
+By default PDF files for received faxes are saved on the server for 30 days. If
+you wish to change this interval, edit the file “/etc/cron.d/hynsphax” and
+change the “+30” to whatever number of days you wish. If you would like the
+HylaFAX original TIFF files saved for the same interval, whether it is the
+default 30 or a different number, edit the file “/etc/cron.daily/hylafax” and
+add the option “-rcv <days>” to the faxcron invocation therein.
+
+Finally, edit the file “/etc/hylafax/hynsphax.conf” to meet your requirements.
+The file contains documentation for the configuration options available within
+it. This file is in Perl syntax, you should run “perl -c
+/etc/hylafax/hynsphax.conf” after updating it to validate there are no errors.
+
+
+* netsapiens servers
+
+Update the file “/etc/netsapiens/api_config.php” and add or edit the following
+entries:
+
+	Configure::write('Phaxio.key' , '<phaxio_key>');
+	Configure::write('Phaxio.secret' , '<phaxio_secret>');
+
+
+The key and the secret should be random strings of reasonable length and
+complexity, and will need to match the values configured in hynsphax.conf.
+
+Next, edit the file “/etc/netsapiens/hynsphax.conf” to meet your requirements.
+The file contains documentation for the configuration options available within
+it. This file is in Perl syntax, you should run “perl -c
+/etc/hylafax/hynsphax.conf” after updating it to validate there are no errors.
+
+
+* Database
+
+The configuration database contains a table named “hy_servers” which provides a
+mapping between HylaFAX server host names and two digit node identifiers. For
+each HylaFAX server you have provisioned, assign it a node id and create an
+entry in this table; for example:
+
+	insert into hy_servers (hostname, node_id)
+			values (‘hyfax1.my.domain’, ‘01’);
+	insert into hy_servers (hostname, node_id)
+			values (‘hyfax2.my.domain’, ‘02’);
+
+
+There is a another table named ns_servers which contains a mapping from
+netsapiens server host names to the order they should use when attempting to
+contact the HylaFAX servers. The order is a comma separated list of node IDs.
+The netsapiens server will attempt to contact each one in turn, stopping once a
+transaction is successful, or failing if it is unable to successfully process
+the transaction on any of the nodes. For example, if there are two netsapiens
+servers, each of which should access the above example HylaFAX servers with
+reversed priority, you might create the entries:
+
+	insert into ns_servers (hostname, hy_node_order)
+			values (‘ns1.my.domain’, ’01,02’);
+	insert into ns_servers (hostname, hy_node_order)
+			values (‘ns2.my.domain’, ’02,01’);
+
+
+The last table in the configuration database is the linchpin of the system;
+named “fax” it contains data defining all of the fax numbers known to the
+system, how to handle received faxes to them, HylaFAX job options for both
+received and sent faxes, along with assorted metadata about the number. The
+specific column definitions are:
+
+- number (required): The fax number, generally in E.123 notation. The special
+                     entry "default" defines what to do with incoming faxes
+		     to numbers that don't exist, as well as the default
+		     HylaFAX options applied to all fax processing.
+
+- name (optional): A name to associate with the fax number, available as
+                   a macro variable in the fax options.
+
+- city (optional): The city the fax number is located in.
+
+- state (optional): The state the fax number is located in.
+
+- cost (optional): A cost factor associated with the fax number.
+
+- destinations (required): How to handle an incoming fax to the number,
+                           further detailed below.
+
+- provision_date (optional): The date the number was created.
+
+- hy_job_opts (optional): The HylaFAX options applied to both incoming and
+                          outgoing faxes associated with the number, in a
+			  format as detailed below.
+
+- hy_job_opts_in (optional): The HylaFAX options applied to incoming faxes to
+                             the number.
+
+- hy_job_opts_out (optional): The HylaFAX options applied to outgoing faxes
+                              from the number.
+
+
+The destination column lists one or more groups of destinations, separated by
+commas, where each group consists of one or more destination, separated by the
+vertical bar/pipe symbol (|). 
+
+There are currently only two supported destinations. First is the "null"
+destination, which simply discards any incoming faxes. Second is the
+"netsapiens" destination, which routes a fax to a netsapiens server. The format
+for a netsapiens destination is:
+
+	netsapiens:host=<hostname>,user=<user>
+
+
+for example:
+
+	netsapiens:host=ns01.mydomain.com,user=101
+
+
+Destination groups are processed in order, as is each option in a destination
+group. If any destination group option succeeds, that group is considered
+complete. Otherwise, the group is stored in the outbound queue to get retried
+per the retry interval configuration in hynsphax.conf. An entry that tries to
+deliver a fax to one of two netsapiens servers might be:
+
+	netsapiens:host=ns01.mydomain.com,user=101,netsapiens:host=ns02.mydomain.com,user=101
+
+
+The format for hy_job_opts (as well as the in/out variants) is:
+
+	<option>=<value>[^<option>=<value>]...
+
+
+Basically, option/value pairs separated by the carat (^) character, for
+example:
+
+	Class1ECMSupport=Yes^Class1PersistentECM=Yes^Class1ECMFrameSize=256
+
+
+The values support macro expansion for a limited set of variables, currently
+only NAME (the name associated with the fax number), FAX_NUM (the fax number
+being processed), and IP_ADDR (the IP address of the HylaFAX server. An example
+using macro expansion:
+
+	BTCallSetupNumber=${FAX_NUM}@${IP_ADDR}
+
+or
+	TagLineFormat=%F %I:%M%p %Z|${FAX_NUM}     ${NAME}|Page %%P/%%T
+
+
+Parameters in hy_job_opts are applied to both HylaFAX DynamicConfig (inbound)
+jobs and JobControl (outbound) jobs, whereas hy_job_opts_in and hy_job_opts_out
+apply to only inbound or outbound jobs respectively.
+
+
+Feedback/Availability
+---------------------
+
+hynsphax is currently available at github:
+
+	https://github.com/pbhenson/hynsphax
+
+
+Issues and/or pull requests may be opened via github, or the author can be
+contacted directly at the email address <henson@acm.org>. Installation or
+customization assistance beyond basic questions or problems is available at an
+hourly rate.
+
+
+License/Copyright
+-----------------
+
+Copyright 2019 Paul B. Henson <henson@acm.org>
+
+hynsphax is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+Please see the LICENSE file for further details, or visit the URL
+
+	https://www.gnu.org/licenses/
