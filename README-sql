@@ -17,6 +17,9 @@ sample schema named queue-sqlite.sql is available in the sql subdirectory. The
 following commands can be used to initialize the queue database on each HylaFAX
 server:
 
+	mkdir /var/spool/hylafax/config/hynsphax
+	chown hylafax:apache /var/spool/hylafax/config/hynsphax
+	chmod 770 /var/spool/hylafax/config/hynsphax
 	sqlite3 /var/spool/hylafax/config/hynsphax/queue.db < sql/queue-sqlite.sql
 	chown hylafax:apache /var/spool/hylafax/config/hynsphax/queue.db
 	chmod 660 /var/spool/hylafax/config/hynsphax/queue.db
