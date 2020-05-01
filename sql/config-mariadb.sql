@@ -6,9 +6,9 @@ create table fax(
 	cost int,
 	destinations varchar(4096) not null,
 	provision_date bigint unsigned,
-	hy_job_opts varchar(8192),
-	hy_job_opts_in varchar(8192),
-	hy_job_opts_out varchar(8192)
+	hy_job_opts text(8192),
+	hy_job_opts_in text(8192),
+	hy_job_opts_out text(8192)
 );
 
 create table hy_servers(
