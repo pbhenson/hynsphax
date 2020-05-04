@@ -148,11 +148,11 @@ run the following commands to install the necessary software components:
 
 	cp netsapiens/cgi/send /var/www/hynsphax/cgi-bin/send
 	chgrp www-data /var/www/hynsphax/cgi-bin/send
-	chmod 550 /var/www/hynsphax/cgi-bin/numberList
+	chmod 550 /var/www/hynsphax/cgi-bin/send
 
 	cp netsapiens/cgi/faxFile /var/www/hynsphax/cgi-bin/faxFile
-	chgrp www-data /var/www/hynsphax/cgi-bin/send
-	chmod 550 /var/www/hynsphax/cgi-bin/send
+	chgrp www-data /var/www/hynsphax/cgi-bin/faxFile
+	chmod 550 /var/www/hynsphax/cgi-bin/faxFile
 
 	mkdir /var/www/hynsphax/lib
 	chgrp www-data /var/www/hynsphax/lib
