@@ -16,7 +16,6 @@ use warnings;
 
 use DBI ();
 use CGI ();
-use LWP::UserAgent ();
 use POSIX ();
 use Unix::Syslog ();
 
