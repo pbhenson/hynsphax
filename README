@@ -65,6 +65,7 @@ it. This file is in Perl syntax, you should run “perl -c
 Update the file “/etc/netsapiens/api_config.php” and add or edit the following
 entries:
 
+	Configure::write('NsPhaxioURL' , 'http://localhost:8081');
 	Configure::write('Phaxio.key' , '<phaxio_key>');
 	Configure::write('Phaxio.secret' , '<phaxio_secret>');
 
