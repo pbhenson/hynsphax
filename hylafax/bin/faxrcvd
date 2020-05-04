@@ -79,9 +79,9 @@ my $retval;
 if (@ARGV == 1 && $ARGV[0] eq '--process-queue') {
 	_logd("processing queued inbound fax deliveries");
 
-	if (mkdir('/var/spool/hylafax/tmp/faxrcvd-queue.lock')) {
+	if (mkdir("$hf_dir/tmp/faxrcvd-queue.lock")) {
 		$retval = process_queue();
-		if (!rmdir('/var/spool/hylafax/tmp/faxrcvd-queue.lock')) {
+		if (!rmdir("$hf_dir/tmp/faxrcvd-queue.lock")) {
 			_log("error: failed to remove queue lockfile - $!");
 			$retval = 1;
 		}
@@ -477,7 +477,7 @@ sub netsapiens_hander {
 	$url .= uri_escape($options->{user}) . '@' . uri_escape($options->{domain});
 	_logd("url = $url");
 
-	my $ns_id = "${node_id}${id}";
+	my $ns_id = "${node_id}0${id}";
 
 	my $fax_json_template = '{"id":"%s","num_pages":%s,"cost":0,' .
 				'"direction":"received","status":"success",' .

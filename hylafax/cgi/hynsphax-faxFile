@@ -40,13 +40,16 @@ $type =~ /^(p|l|s)$/ or
 
 _logd("called with id = $id, type = $type");
 
-my $file = "/var/spool/hylafax/recvq-pdf/fax${id}";
+my $queue = (substr($id, 0, 1, "") == 0 ? 'recvq' : 'doneq');
+
+my $file = "/var/spool/hylafax/$queue-pdf/fax${id}";
 if ($type eq 'p') {
 	$file .= '.pdf';
 }
 else {
 	$file .= "-${type}.jpg";
 }
+_logd("requesting $file");
 
 if (! -f $file) {
 	cgi_fail('Fax with this ID does not exist', "%s - $file");

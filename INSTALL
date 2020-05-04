@@ -71,6 +71,11 @@ run the following commands to install the necessary software components:
 	chmod 750 /var/spool/hylafax/recvq-pdf
 	chmod g+s /var/spool/hylafax/recvq-pdf
 
+	mkdir /var/spool/hylafax/doneq-pdf
+	chown hylafax:apache /var/spool/hylafax/doneq-pdf
+	chmod 750 /var/spool/hylafax/doneq-pdf
+	chmod g+s /var/spool/hylafax/doneq-pdf
+
 	cp hylafax/cgi/hynsphax-send /var/www/cgi-bin/hynsphax-send
 	chgrp apache /var/www/cgi-bin/hynsphax-send
 	chmod 550 /var/www/cgi-bin/hynsphax-send

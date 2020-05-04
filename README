@@ -47,9 +47,9 @@ Update the file “/var/spool/hylafax/etc/CONFIG/site” and add the two entries
 	UseJobTSI:	true
 
 
-By default PDF files for received faxes are saved on the server for 30 days. If
-you wish to change this interval, edit the file “/etc/cron.d/hynsphax” and
-change the “+30” to whatever number of days you wish. If you would like the
+By default PDF files for received and sent faxes are saved on the server for 30
+days. If you wish to change this interval, edit the file “/etc/cron.d/hynsphax”
+and change the “+30” to whatever number of days you wish. If you would like the
 HylaFAX original TIFF files saved for the same interval, whether it is the
 default 30 or a different number, edit the file “/etc/cron.daily/hylafax” and
 add the option “-rcv <days>” to the faxcron invocation therein.

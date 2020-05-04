@@ -19,6 +19,8 @@ use LWP::UserAgent ();
 use Sys::Hostname ();
 use Unix::Syslog ();
 
+my $hf_dir = '/var/spool/hylafax';
+
 my $now = time();
 
 require '/etc/hylafax/hynsphax-common.pl';
@@ -104,12 +106,12 @@ _logd("server $hostname node_id $node_id");
 
 my $retval;
 
-if (mkdir('/var/spool/hylafax/tmp/hynsphax-send-queue.lock')) {
+if (mkdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
 	_logd("processing outbound queue");
 
 	$retval = process_queue();
 
-	if (!rmdir('/var/spool/hylafax/tmp/hynsphax-send-queue.lock')) {
+	if (!rmdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
 		_log("error: failed to remove queue lockfile - $!");
 		$retval = 1;
 	}	
@@ -259,6 +261,11 @@ sub process_entry {
 		if ($state =~ /^(D|F)$/) {
 			_logd("job completed with state $state, making callback");
 
+			if ($state eq 'D') {
+				_logd("generating pdf/previews for $id");
+				generate_pdf($id);
+			}
+
 			my @error_detail = $state eq 'F' ? error_map($id) : ();
 
 			if (phaxio_callback($callback_url, $state eq 'D' ? 'success' : 'failure', $id,
@@ -289,11 +296,103 @@ sub process_entry {
 	}
 }
 
+sub generate_pdf {
+	my ($id) = @_;
+
+	my $ps_file;
+	if (open(QF, "<$hf_dir/doneq/q$id")) {
+		while (<QF>) {
+			chomp;
+			if (/^!postscript:0::docq\/(.*\.ps)/) {
+				$ps_file = $1;
+				_logd("found ps file $ps_file for id $id");
+				last;
+			}
+		}
+		close(QF);
+	}
+	else {
+		_log("error: failed to open doneq/q$id - $!");
+		return;
+	}
+
+	if (!$ps_file) {
+		_log("error: no ps_file found for id $id");
+		return;
+	}
+
+	_logd("generating pdf");
+	my ($status, $output) = read_pipe('/usr/bin/ps2pdf',
+					  "$hf_dir/docq/$ps_file",
+					  "$hf_dir/doneq-pdf/fax${id}.pdf");
+
+	if ($status < 0) {
+		_logp("error: ps2pdf on $ps_file failed to execute");
+		return;
+	}
+	elsif ($status != 1) {
+		_logp("error: ps2pdf on $ps_file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from ps2pdf on $ps_file - $_");
+		}
+	}
+
+	_logd("generating small jpeg preview");
+	($status, $output) = read_pipe('/usr/bin/convert', "$hf_dir/doneq-pdf/fax${id}.pdf",
+				       '-density', '72', '-resize', '129x167',
+				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
+
+	if ($status < 0) {
+		_logp("error: convert (small) on $ps_file failed to execute");
+		return;
+	}
+	elsif ($status != 1) {
+		_logp("error: convert (small) on $ps_file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from convert (small) on $ps_file - $_");
+		}
+	}
+
+	_logd("generating large jpeg preview");
+	($status, $output) = read_pipe('/usr/bin/convert', "$hf_dir/doneq-pdf/fax${id}.pdf",
+				       '-density', '72', '-resize', '300x388',
+				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
+
+	if ($status < 0) {
+		_logp("error: convert (large) on $ps_file failed to execute");
+		return;
+	}
+	elsif ($status != 1) {
+		_logp("error: convert (large) on $ps_file failed");
+		foreach (@{$output}) {
+			_logp("\t$_");
+		}
+		return;
+	}
+	else {
+		foreach (@{$output}) {
+			_log("warning: unexpected output from convert (large) on $ps_file - $_");
+		}
+	}
+}
+
 sub phaxio_callback {
 	my ($callback_url, $state, $id, $to, $pages, $request_time, $complete_time, $retries,
 	    $error_type, $error_code, $error_id) = @_;
 
-	my $fax_json = '{"id":"' . "${node_id}${id}" . '","num_pages":' . $pages .
+	my $fax_json = '{"id":"' . "${node_id}1${id}" . '","num_pages":' . $pages .
 		       ',"cost":0,"direction":"sent","status":"' . $state .
 		       '","is_test":false,"requested_at":' . $request_time .
 		       ',"completed_at":' . $complete_time . ',"recipients":[{"number":"' .
@@ -364,7 +463,7 @@ sub error_map {
 	my ($id) = @_;
 
 	my $statuscode;
-	if (open(QF, "</var/spool/hylafax/doneq/q$id")) {
+	if (open(QF, "<$hf_dir/doneq/q$id")) {
 		while (<QF>) {
 			chomp;
 			if (/^statuscode:(\d+)/) {
