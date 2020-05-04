@@ -149,6 +149,9 @@ run the following commands to install the necessary software components:
 	chgrp www-data /var/www/hynsphax/cgi-bin/send
 	chmod 550 /var/www/hynsphax/cgi-bin/send
 
+	mkdir /var/www/hynsphax/lib
+	chgrp www-data /var/www/hynsphax/lib
+	chmod 750 /var/www/hynsphax/lib
 	cp common/hynsphax-common.pl /var/www/hynsphax/lib/hynsphax-common.pl 
 	chmod 444 /var/www/hynsphax/lib/hynsphax-common.pl
 
