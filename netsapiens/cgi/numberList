@@ -107,15 +107,15 @@ while (($number, $city, $state, $cost, $destinations, $provision_date) =
 	my $number_json = '{"number":"' . json_escape($number) . '",';
 
 	if (defined($city)) {
-		$number_json .= '{"city":"' . json_escape($city) . '",';
+		$number_json .= '"city":"' . json_escape($city) . '",';
 	}
 
 	if (defined($state)) {
-		$number_json .= '{"state":"' . json_escape($city) . '",';
+		$number_json .= '"state":"' . json_escape($city) . '",';
 	}
 
 	if (defined($cost)) {
-		$number_json .= '{"cost":"' . json_escape($cost) . '",';
+		$number_json .= '"cost":"' . json_escape($cost) . '",';
 	}
 
 	$number_json .= '"provisioned_at":"' .
