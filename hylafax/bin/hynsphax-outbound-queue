@@ -15,6 +15,7 @@ use strict;
 use warnings;
 
 use DBI ();
+use File::Copy ();
 use LWP::UserAgent ();
 use Sys::Hostname ();
 use Unix::Syslog ();
@@ -299,13 +300,18 @@ sub process_entry {
 sub generate_pdf {
 	my ($id) = @_;
 
-	my $ps_file;
+	my $src_file;
 	if (open(QF, "<$hf_dir/doneq/q$id")) {
 		while (<QF>) {
 			chomp;
-			if (/^!postscript:0::docq\/(.*\.ps)/) {
-				$ps_file = $1;
-				_logd("found ps file $ps_file for id $id");
+			if (/^!pdf:0::docq\/(.*\.pdf)/) {
+				$src_file = $1;
+				_logd("found pdf file $src_file for id $id");
+				last;
+			}
+			elsif (/^!postscript:0::docq\/(.*\.ps)/) {
+				$src_file = $1;
+				_logd("found ps file $src_file for id $id");
 				last;
 			}
 		}
@@ -316,44 +322,56 @@ sub generate_pdf {
 		return;
 	}
 
-	if (!$ps_file) {
-		_log("error: no ps_file found for id $id");
+	if (!$src_file) {
+		_log("error: no src_file found for id $id");
 		return;
 	}
 
-	_logd("generating pdf");
-	my ($status, $output) = read_pipe('/usr/bin/ps2pdf',
-					  "$hf_dir/docq/$ps_file",
-					  "$hf_dir/doneq-pdf/fax${id}.pdf");
+	my $pdf_file = "$hf_dir/doneq-pdf/fax${id}.pdf";
 
-	if ($status < 0) {
-		_logp("error: ps2pdf on $ps_file failed to execute");
-		return;
-	}
-	elsif ($status != 1) {
-		_logp("error: ps2pdf on $ps_file failed");
-		foreach (@{$output}) {
-			_logp("\t$_");
+	my ($status, $output);
+	if ($src_file =~ /\.ps$/) {
+		_logd("generating pdf");
+		($status, $output) = read_pipe('/usr/bin/ps2pdf',
+						  "$hf_dir/docq/$src_file",
+						  $pdf_file);
+
+		if ($status < 0) {
+			_logp("error: ps2pdf on $src_file failed to execute");
+			return;
 		}
-		return;
+		elsif ($status != 1) {
+			_logp("error: ps2pdf on $src_file failed");
+			foreach (@{$output}) {
+				_logp("\t$_");
+			}
+			return;
+		}
+		else {
+			foreach (@{$output}) {
+				_log("warning: unexpected output from ps2pdf on $src_file - $_");
+			}
+		}
 	}
 	else {
-		foreach (@{$output}) {
-			_log("warning: unexpected output from ps2pdf on $ps_file - $_");
+		_logd("copying existing pdf");
+		if (!File::Copy::copy("$hf_dir/docq/$src_file", $pdf_file)) {
+			_logp("error: failed to copy $src_file to $pdf_file - $!");
+			return;
 		}
 	}
 
 	_logd("generating small jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', "$hf_dir/doneq-pdf/fax${id}.pdf",
+	($status, $output) = read_pipe('/usr/bin/convert', $pdf_file,
 				       '-density', '72', '-resize', '129x167',
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
-		_logp("error: convert (small) on $ps_file failed to execute");
+		_logp("error: convert (small) on $pdf_file failed to execute");
 		return;
 	}
 	elsif ($status != 1) {
-		_logp("error: convert (small) on $ps_file failed");
+		_logp("error: convert (small) on $pdf_file failed");
 		foreach (@{$output}) {
 			_logp("\t$_");
 		}
@@ -361,21 +379,21 @@ sub generate_pdf {
 	}
 	else {
 		foreach (@{$output}) {
-			_log("warning: unexpected output from convert (small) on $ps_file - $_");
+			_log("warning: unexpected output from convert (small) on $pdf_file - $_");
 		}
 	}
 
 	_logd("generating large jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', "$hf_dir/doneq-pdf/fax${id}.pdf",
+	($status, $output) = read_pipe('/usr/bin/convert', $pdf_file,
 				       '-density', '72', '-resize', '300x388',
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
-		_logp("error: convert (large) on $ps_file failed to execute");
+		_logp("error: convert (large) on $pdf_file failed to execute");
 		return;
 	}
 	elsif ($status != 1) {
-		_logp("error: convert (large) on $ps_file failed");
+		_logp("error: convert (large) on $pdf_file failed");
 		foreach (@{$output}) {
 			_logp("\t$_");
 		}
@@ -383,7 +401,7 @@ sub generate_pdf {
 	}
 	else {
 		foreach (@{$output}) {
-			_log("warning: unexpected output from convert (large) on $ps_file - $_");
+			_log("warning: unexpected output from convert (large) on $pdf_file - $_");
 		}
 	}
 }
