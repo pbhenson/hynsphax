@@ -185,7 +185,7 @@ sub json_escape {
 sub var_swap {
 	my ($vars, $val) = @_;
 
-	while ($val =~ /(^|[^\\])\${([^}]+)}/) {
+	while ($val =~ /(^|[^\\])\$\{([^}]+)}/) {
 		my ($lead_char, $var_name) = ($1, $2);
 		my $sub;
 		if (exists($vars->{$var_name})) {
