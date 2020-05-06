@@ -362,7 +362,7 @@ sub generate_pdf {
 	}
 
 	_logd("generating small jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', $pdf_file,
+	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
 				       '-density', '72', '-resize', '129x167',
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
@@ -384,7 +384,7 @@ sub generate_pdf {
 	}
 
 	_logd("generating large jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', $pdf_file,
+	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
 				       '-density', '72', '-resize', '300x388',
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
