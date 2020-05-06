@@ -1,1 +1,6 @@
-0.5 - First publicly released version
+0.5.1 - Fix 'Unescaped left brace in regex is deprecated' warning
+
+        Make preview of only first page for sent faxes
+
+
+0.5   - First publicly released version
