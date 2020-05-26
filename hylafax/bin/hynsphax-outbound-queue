@@ -226,7 +226,7 @@ sub process_entry {
 
 		if (!$delay) {
 			_log("warning: retry $fax_tries count exceeded for $id, removing entry");
-			del_entry($id);
+			remove_entry($id);
 		}
 		elsif ($now - $last_cb_try <= $delay) {
 			_logd("retry delay not met, skipping");
@@ -240,7 +240,7 @@ sub process_entry {
 					    $id, $to, $pages, $received_time, $completed_time, $fax_tries,
 					    @error_detail)) {
 				_logd("callback succeeded,  deleting queue entry");
-				del_entry($id);
+				remove_entry($id);
 			}
 			else {
 				_logd("callback failed again, updating entry");
