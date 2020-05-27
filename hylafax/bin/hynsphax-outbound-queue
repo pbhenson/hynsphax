@@ -361,9 +361,22 @@ sub generate_pdf {
 		}
 	}
 
+	my @jpg_resolution = (129, 167);
+	my $jpg_ratio = hynsphax_config('jpg_s_ratio');
+	if (defined($jpg_ratio)) {
+		if ($jpg_ratio > 0 && $jpg_ratio =~ /^\d?\.?\d+$/) {
+			$jpg_resolution[0] = int($jpg_resolution[0]*$jpg_ratio + 0.5);
+			$jpg_resolution[1] = int($jpg_resolution[1]*$jpg_ratio + 0.5);
+			_logd("jpg_s_ratio = $jpg_ratio, resolution set to " . join('x', @jpg_resolution));
+		}
+		else {
+			_logp("warning: ignoring invalid jpg_s_ratio $jpg_ratio");
+		}
+	}
+
 	_logd("generating small jpeg preview");
 	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       '-density', '72', '-resize', '129x167',
+				       '-density', '72', '-resize', join('x', @jpg_resolution),
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
@@ -383,9 +396,22 @@ sub generate_pdf {
 		}
 	}
 
+	@jpg_resolution = (300, 388);
+	$jpg_ratio = hynsphax_config('jpg_l_ratio');
+	if (defined($jpg_ratio)) {
+		if ($jpg_ratio > 0 && $jpg_ratio =~ /^\d?\.?\d+$/) {
+			$jpg_resolution[0] = int($jpg_resolution[0]*$jpg_ratio + 0.5);
+			$jpg_resolution[1] = int($jpg_resolution[1]*$jpg_ratio + 0.5);
+			_logd("jpg_l_ratio = $jpg_ratio, resolution set to " . join('x', @jpg_resolution));
+		}
+		else {
+			_logp("warning: ignoring invalid jpg_l_ratio $jpg_ratio");
+		}
+	}
+
 	_logd("generating large jpeg preview");
 	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       '-density', '72', '-resize', '300x388',
+				       '-density', '72', '-resize', join('x', @jpg_resolution),
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
