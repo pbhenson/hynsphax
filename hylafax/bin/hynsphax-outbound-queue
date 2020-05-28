@@ -262,10 +262,8 @@ sub process_entry {
 		if ($state =~ /^(D|F)$/) {
 			_logd("job completed with state $state, making callback");
 
-			if ($state eq 'D') {
-				_logd("generating pdf/previews for $id");
-				generate_pdf($id);
-			}
+			_logd("generating pdf/previews for $id");
+			generate_pdf($id);
 
 			my @error_detail = $state eq 'F' ? error_map($id) : ();
 
