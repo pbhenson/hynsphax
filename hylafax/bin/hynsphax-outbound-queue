@@ -412,7 +412,7 @@ sub generate_pdf {
 	_logd("generating large jpeg preview");
 	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
 				       '-density', '72', '-resize', join('x', @jpg_resolution),
-				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
+				       "$hf_dir/doneq-pdf/fax${id}-l.jpg");
 
 	if ($status < 0) {
 		_logp("error: convert (large) on $pdf_file failed to execute");
