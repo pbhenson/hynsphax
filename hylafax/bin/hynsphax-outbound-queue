@@ -372,9 +372,11 @@ sub generate_pdf {
 		}
 	}
 
-	_logd("generating small jpeg preview");
+	my $jpg_convert_params = hynsphax_config('jpg_convert_params') // '-density 72';
+
+	_logd("generating small jpeg preview using params '$jpg_convert_params'");
 	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       '-density', '72', '-resize', join('x', @jpg_resolution),
+				       split(/\s+/, $jpg_convert_params), '-resize', join('x', @jpg_resolution),
 				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
@@ -407,9 +409,9 @@ sub generate_pdf {
 		}
 	}
 
-	_logd("generating large jpeg preview");
+	_logd("generating large jpeg preview using params '$jpg_convert_params'");
 	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       '-density', '72', '-resize', join('x', @jpg_resolution),
+				       split(/\s+/, $jpg_convert_params), '-resize', join('x', @jpg_resolution),
 				       "$hf_dir/doneq-pdf/fax${id}-l.jpg");
 
 	if ($status < 0) {

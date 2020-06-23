@@ -199,8 +199,10 @@ sub process_fax {
 		}
 	}
 
-	_logd("generating small jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", '-density', '72',
+	my $jpg_convert_params = hynsphax_config('jpg_convert_params') // '-density 72';
+
+	_logd("generating small jpeg preview using params '$jpg_convert_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", split(/\s+/, $jpg_convert_params),
 				       '-resize', join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-s.jpg");
 
 	if ($status < 0) {
@@ -233,8 +235,8 @@ sub process_fax {
 		}
 	}
 
-	_logd("generating large jpeg preview");
-	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", '-density', '72',
+	_logd("generating large jpeg preview using params '$jpg_convert_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", split(/\s+/, $jpg_convert_params),
 				       '-resize', join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-l.jpg");
 
 	if ($status < 0) {
