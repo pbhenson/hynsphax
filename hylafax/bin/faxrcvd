@@ -199,11 +199,13 @@ sub process_fax {
 		}
 	}
 
-	my $jpg_convert_params = hynsphax_config('jpg_convert_params') // '-density 72';
+	my $jpg_convert_src_params = hynsphax_config('jpg_convert_src_params') // '-density 72';
+	my $jpg_convert_dst_params = hynsphax_config('jpg_convert_dst_params') // '';
 
-	_logd("generating small jpeg preview using params '$jpg_convert_params'");
-	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", split(/\s+/, $jpg_convert_params),
-				       '-resize', join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-s.jpg");
+	_logd("generating small jpeg preview using params '$jpg_convert_src_params' / '$jpg_convert_dst_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', split(/\s+/, $jpg_convert_src_params),
+				       "${file}[0]", split(/\s+/, $jpg_convert_dst_params), '-resize',
+				       join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-s.jpg");
 
 	if ($status < 0) {
 		_logp("error: convert (small) failed to execute");
@@ -235,9 +237,10 @@ sub process_fax {
 		}
 	}
 
-	_logd("generating large jpeg preview using params '$jpg_convert_params'");
-	($status, $output) = read_pipe('/usr/bin/convert', "${file}[0]", split(/\s+/, $jpg_convert_params),
-				       '-resize', join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-l.jpg");
+	_logd("generating large jpeg preview using params '$jpg_convert_src_params' / '$jpg_convert_dst_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', split(/\s+/, $jpg_convert_src_params),
+				       "${file}[0]", split(/\s+/, $jpg_convert_dst_params), '-resize',
+				       join('x', @jpg_resolution), "$hf_dir/recvq-pdf/$filename-l.jpg");
 
 	if ($status < 0) {
 		_logp("error: convert (large) failed to execute");

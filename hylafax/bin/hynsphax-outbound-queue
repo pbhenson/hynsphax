@@ -372,12 +372,13 @@ sub generate_pdf {
 		}
 	}
 
-	my $jpg_convert_params = hynsphax_config('jpg_convert_params') // '-density 72';
+	my $jpg_convert_src_params = hynsphax_config('jpg_convert_src_params') // '-density 72';
+	my $jpg_convert_dst_params = hynsphax_config('jpg_convert_dst_params') // '';
 
-	_logd("generating small jpeg preview using params '$jpg_convert_params'");
-	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       split(/\s+/, $jpg_convert_params), '-resize', join('x', @jpg_resolution),
-				       "$hf_dir/doneq-pdf/fax${id}-s.jpg");
+	_logd("generating small jpeg preview using params '$jpg_convert_src_params' / '$jpg_convert_dst_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', split(/\s+/, $jpg_convert_src_params),
+				       "${pdf_file}[0]", split(/\s+/, $jpg_convert_dst_params), '-resize',
+				       join('x', @jpg_resolution), "$hf_dir/doneq-pdf/fax${id}-s.jpg");
 
 	if ($status < 0) {
 		_logp("error: convert (small) on $pdf_file failed to execute");
@@ -409,10 +410,10 @@ sub generate_pdf {
 		}
 	}
 
-	_logd("generating large jpeg preview using params '$jpg_convert_params'");
-	($status, $output) = read_pipe('/usr/bin/convert', "${pdf_file}[0]",
-				       split(/\s+/, $jpg_convert_params), '-resize', join('x', @jpg_resolution),
-				       "$hf_dir/doneq-pdf/fax${id}-l.jpg");
+	_logd("generating large jpeg preview using params '$jpg_convert_src_params' / '$jpg_convert_dst_params'");
+	($status, $output) = read_pipe('/usr/bin/convert', split(/\s+/, $jpg_convert_src_params),
+				       "${pdf_file}[0]", split(/\s+/, $jpg_convert_dst_params), '-resize',
+				       join('x', @jpg_resolution), "$hf_dir/doneq-pdf/fax${id}-l.jpg");
 
 	if ($status < 0) {
 		_logp("error: convert (large) on $pdf_file failed to execute");
