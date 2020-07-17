@@ -1,3 +1,13 @@
+0.6   - Fix typo causing queue processing failure if initial callback failed
+        and needed to be retried
+
+	Add option to change preview jpeg size
+
+	Generate previews for failed outbound faxes too
+
+	Add option for custom parameters to jpeg preview generation
+
+
 0.5.1 - Fix 'Unescaped left brace in regex is deprecated' warning
 
         Make preview of only first page for sent faxes
