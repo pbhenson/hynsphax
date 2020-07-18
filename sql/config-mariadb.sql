@@ -20,4 +20,3 @@ create table ns_servers(
 	hostname varchar(255) not null primary key,
 	hy_node_order varchar(1024) not null
 );
-

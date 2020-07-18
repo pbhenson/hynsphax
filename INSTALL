@@ -104,6 +104,8 @@ run the following commands to install the necessary software components:
 
 	cp common/hynsphax-common.pl /etc/hylafax/hynsphax-common.pl
 	chmod 444 /etc/hylafax/hynsphax-common.pl
+	cp common/hynsphax-common-px.pl /etc/hylafax/hynsphax-common-px.pl
+	chmod 444 /etc/hylafax/hynsphax-common-px.pl
 
 	cp hylafax/hynsphax.conf /etc/hylafax/hynsphax.conf
 	chown hylafax:apache /etc/hylafax/hynsphax.conf
@@ -142,7 +144,7 @@ run the following commands to install the necessary software components:
 	cp netsapiens/apache2-hynsphax.conf \
 			/etc/apache2/sites-enabled/hynsphax.conf
 
-	cp netsapiens/cgi/numberList /var/www/hynsphax/cgi-bin/numberList 
+	cp netsapiens/cgi/numberList /var/www/hynsphax/cgi-bin/numberList
 	chgrp www-data /var/www/hynsphax/cgi-bin/numberList
 	chmod 550 /var/www/hynsphax/cgi-bin/numberList
 
@@ -157,8 +159,10 @@ run the following commands to install the necessary software components:
 	mkdir /var/www/hynsphax/lib
 	chgrp www-data /var/www/hynsphax/lib
 	chmod 750 /var/www/hynsphax/lib
-	cp common/hynsphax-common.pl /var/www/hynsphax/lib/hynsphax-common.pl 
+	cp common/hynsphax-common.pl /var/www/hynsphax/lib/hynsphax-common.pl
 	chmod 444 /var/www/hynsphax/lib/hynsphax-common.pl
+	cp common/hynsphax-common-px.pl /var/www/hynsphax/lib/hynsphax-common-px.pl
+	chmod 444 /var/www/hynsphax/lib/hynsphax-common-px.pl
 
 	cp netsapiens/hynsphax.conf /etc/netsapiens/hynsphax.conf
 	chgrp www-data /etc/netsapiens/hynsphax.conf

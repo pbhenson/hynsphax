@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright 2019 Paul B. Henson <henson@acm.org>
+# Copyright 2019-2020 Paul B. Henson <henson@acm.org>
 # 
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,8 +17,9 @@ use warnings;
 use CGI ();
 use Unix::Syslog ();
 
-require '/etc/hylafax/hynsphax-common.pl';
 require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-px.pl';
 
 my $debug = hynsphax_config('debug') // 0;
 _log_debug($debug);
