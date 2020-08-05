@@ -2,11 +2,19 @@ Introduction
 ------------
 
 A hynsphax deployment can consist of multiple HylaFAX servers and multiple
-netsapiens servers. The following installation steps for each type of server
-must be performed on each server that is deployed. The installation process was
-tested with the HylaFAX Enterprise appliance ISO version 6.2.14 and netsapiens
-version 1:40.1; there may be variances with different versions of either
-software or the open-source release of HylaFAX.
+netsapiens and/or faxback ata connector servers. There are no components of
+hynsphax to be installed on the windows based ata connector software. The
+following installation steps must be performed for each HylaFAX and netsapiens
+server deployed. The installation process was tested with the HylaFAX
+Enterprise appliance ISO version 6.2.14 and netsapiens version 1:40.1; there
+may be variances with different versions of either software package or the
+open-source release of HylaFAX.
+
+If this is an upgrade rather than an initial install, you can follow the same
+set of instructions other than where indicated below, with the caveat that if
+you copy in the newer configuration files, you will need to restore any local
+updates made to them. You should also review the CHANGES file to check for any
+specific upgrade steps required for the version being installed.
 
 
 HylaFAX servers
@@ -17,14 +25,17 @@ hynsphax requires the following packages to be installed for basic operation:
 	perl-Unix-Syslog.x86_64
 	perl-libwww-perl
 	perl-CGI
+	perl-Data-UUID.x86_64
 	perl-DBD-SQLite
 	perl-LWP-Protocol-https
 	perl-File-LibMagic
+	perl-XML-Simple
 
 This prerequisite can be met by running:
 
 	yum install perl-Unix-Syslog.x86_64 perl-libwww-perl perl-CGI \
-	perl-DBD-SQLite perl-LWP-Protocol-https perl-File-LibMagic
+	perl-Data-UUID.x86_64 perl-DBD-SQLite perl-LWP-Protocol-https \
+	perl-File-LibMagic perl-XML-Simple
 
 
 If support for faxing office documents is desired, these additional packages
@@ -49,7 +60,7 @@ upon fax submission:
 	chmod 750 /usr/share/httpd/.cache
 	chown apache:apache /usr/share/httpd/.cache/dconf
 	chmod 770 /usr/share/httpd/.cache/dconf
-	mkdir /usr/share/httpd/.config
+	mkdir -p /usr/share/httpd/.config
 	chown apache:apache /usr/share/httpd/.config
 	chmod 770 /usr/share/httpd/.config
 
@@ -64,52 +75,96 @@ document (and the patience of the author).
 
 
 With your current working directory as the root of the hynsphax distribution,
-run the following commands to install the necessary software components:
+run the following commands to install the necessary general software
+components:
 
-	mkdir /var/spool/hylafax/recvq-pdf
+	mkdir -p /var/spool/hylafax/recvq-pdf
 	chown hylafax:apache /var/spool/hylafax/recvq-pdf
 	chmod 750 /var/spool/hylafax/recvq-pdf
 	chmod g+s /var/spool/hylafax/recvq-pdf
 
-	mkdir /var/spool/hylafax/doneq-pdf
+	mkdir -p /var/spool/hylafax/doneq-pdf
 	chown hylafax:apache /var/spool/hylafax/doneq-pdf
 	chmod 750 /var/spool/hylafax/doneq-pdf
 	chmod g+s /var/spool/hylafax/doneq-pdf
 
-	cp hylafax/cgi/hynsphax-send /var/www/cgi-bin/hynsphax-send
-	chgrp apache /var/www/cgi-bin/hynsphax-send
-	chmod 550 /var/www/cgi-bin/hynsphax-send
+	\cp hylafax/hynsphax-cron /etc/cron.d/hynsphax
+	chown root:root /etc/cron.d/hynsphax
+	chmod 644 /etc/cron.d/hynsphax
 
-	cp hylafax/cgi/hynsphax-faxFile /var/www/cgi-bin/hynsphax-faxFile
-	chgrp apache /var/www/cgi-bin/hynsphax-faxFile
-	chmod 550 /var/www/cgi-bin/hynsphax-faxFile
-
-	cp hylafax/hynsphax-cron /etc/cron.d/hynsphax
-
-	cp hylafax/bin/hynsphax-outbound-queue \
+	\cp hylafax/bin/hynsphax-outbound-queue \
 			/var/spool/hylafax/bin/hynsphax-outbound-queue
-	chgrp hylafax /var/spool/hylafax/bin/hynsphax-outbound-queue
+	chown root:hylafax /var/spool/hylafax/bin/hynsphax-outbound-queue
 	chmod 550 /var/spool/hylafax/bin/hynsphax-outbound-queue
 
-	mv /var/spool/hylafax/bin/faxrcvd /var/spool/hylafax/bin/faxrcvd.orig
-	cp hylafax/bin/faxrcvd /var/spool/hylafax/bin/faxrcvd
-	chgrp hylafax /var/spool/hylafax/bin/faxrcvd
+	if [ ! -f /var/spool/hylafax/bin/faxrcvd.orig ] ; then
+		mv /var/spool/hylafax/bin/faxrcvd /var/spool/hylafax/bin/faxrcvd.orig
+	fi
+	\cp hylafax/bin/faxrcvd /var/spool/hylafax/bin/faxrcvd
+	chown root:hylafax /var/spool/hylafax/bin/faxrcvd
 	chmod 550 /var/spool/hylafax/bin/faxrcvd
 
-	cp hylafax/bin/hynsphax-jobcontrol \
+	\cp hylafax/bin/hynsphax-jobcontrol \
 			/var/spool/hylafax/bin/hynsphax-jobcontrol
-	chgrp hylafax /var/spool/hylafax/bin/hynsphax-jobcontrol
+	chown root:hylafax /var/spool/hylafax/bin/hynsphax-jobcontrol
 	chmod 550 /var/spool/hylafax/bin/hynsphax-jobcontrol
+	rm -f /var/spool/hylafax/bin/hynsphax-dynamicconfig
 	ln -s hynsphax-jobcontrol /var/spool/hylafax/bin/hynsphax-dynamicconfig
 
-	cp common/hynsphax-common.pl /etc/hylafax/hynsphax-common.pl
+	\cp common/hynsphax-common.pl /etc/hylafax/hynsphax-common.pl
 	chmod 444 /etc/hylafax/hynsphax-common.pl
-	cp common/hynsphax-common-px.pl /etc/hylafax/hynsphax-common-px.pl
-	chmod 444 /etc/hylafax/hynsphax-common-px.pl
 
-	cp hylafax/hynsphax.conf /etc/hylafax/hynsphax.conf
+	# Note - for upgrade, either copy in new config file and restore local
+	#        changes, or apply new configuration options to existing file
+	\cp hylafax/hynsphax.conf /etc/hylafax/hynsphax.conf
 	chown hylafax:apache /etc/hylafax/hynsphax.conf
 	chmod 640 /etc/hylafax/hynsphax.conf
+
+
+The following commands install the phaxio API compatibility components:
+
+	\cp hylafax/cgi/hynsphax-send /var/www/cgi-bin/hynsphax-send
+	chown root:apache /var/www/cgi-bin/hynsphax-send
+	chmod 550 /var/www/cgi-bin/hynsphax-send
+
+	\cp hylafax/cgi/hynsphax-faxFile /var/www/cgi-bin/hynsphax-faxFile
+	chown root:apache /var/www/cgi-bin/hynsphax-faxFile
+	chmod 550 /var/www/cgi-bin/hynsphax-faxFile
+
+	\cp common/hynsphax-common-px.pl /etc/hylafax/hynsphax-common-px.pl
+	chown root:root /etc/hylafax/hynsphax-common-px.pl
+	chmod 444 /etc/hylafax/hynsphax-common-px.pl
+
+
+The following commands install the faxback ata connector compatibility
+components:
+
+	mkdir -p /var/www/cgi-bin/fb
+	chown root:root /var/www/cgi-bin/fb
+	chmod 755 /var/www/cgi-bin/fb
+
+	for f in hylafax/cgi/fb/AccountLoginDetail \
+			hylafax/cgi/fb/AccountProvisioningDetail \
+			hylafax/cgi/fb/AuthorizeSendFax \
+			hylafax/cgi/fb/DeliverImageStatus \
+			hylafax/cgi/fb/SendFax \
+			hylafax/cgi/fb/SentFaxStatus ; do
+		\cp $f /var/www/cgi-bin/fb/$(basename $f)
+		chown root:apache /var/www/cgi-bin/fb/$(basename $f)
+		chmod 555 /var/www/cgi-bin/fb/$(basename $f)
+	done
+
+        \cp hylafax/hynsphax-common-fb.pl /etc/hylafax/hynsphax-common-fb.pl
+	chown root:root /etc/hylafax/hynsphax-common-fb.pl
+	chmod 444 /etc/hylafax//hynsphax-common-fb.pl
+
+	# Note - this file enables passing through the client Authorization
+	#        header for the faxback cgis. Depending on your environment,
+	#        you might need other apache specific configuration to enable
+	#        ssl or virtualhosts
+        \cp hylafax/apache2-hynsphax.conf /etc/httpd/conf.d/hynsphax.conf
+	chown root:root /etc/httpd/conf.d/hynsphax.conf
+	chmod 444 /etc/httpd/conf.d/hynsphax.conf
 
 
 netsapiens
@@ -132,38 +187,49 @@ example, libdbd-mysql-perl) must also be installed.
 With your current working directory as the root of the hynsphax distribution,
 run the following commands to install the necessary software components:
 
-	mkdir /var/www/hynsphax
-	chgrp www-data /var/www/hynsphax
+	mkdir -p /var/www/hynsphax
+	chown root:www-data /var/www/hynsphax
 	chmod 750 /var/www/hynsphax
 
-	mkdir /var/www/hynsphax/cgi-bin
-	chgrp www-data /var/www/hynsphax/cgi-bin
+	mkdir -p /var/www/hynsphax/cgi-bin
+	chown root:www-data /var/www/hynsphax/cgi-bin
 	chmod 750 /var/www/hynsphax/cgi-bin
 
-	ln -s ../mods-available/cgi.load /etc/apache2/mods-enabled
-	cp netsapiens/apache2-hynsphax.conf \
-			/etc/apache2/sites-enabled/hynsphax.conf
+	if [ ! -h /etc/apache2/mods-enabled/cgi.load ] ; then
+		ln -s ../mods-available/cgi.load /etc/apache2/mods-enabled
+	fi
 
-	cp netsapiens/cgi/numberList /var/www/hynsphax/cgi-bin/numberList
-	chgrp www-data /var/www/hynsphax/cgi-bin/numberList
+	\cp netsapiens/apache2-hynsphax.conf \
+			/etc/apache2/sites-enabled/hynsphax.conf
+	chown root:root /etc/apache2/sites-enabled/hynsphax.conf
+	chmod 444 /etc/apache2/sites-enabled/hynsphax.conf
+
+	\cp netsapiens/cgi/numberList /var/www/hynsphax/cgi-bin/numberList
+	chown root:www-data /var/www/hynsphax/cgi-bin/numberList
 	chmod 550 /var/www/hynsphax/cgi-bin/numberList
 
-	cp netsapiens/cgi/send /var/www/hynsphax/cgi-bin/send
-	chgrp www-data /var/www/hynsphax/cgi-bin/send
+	\cp netsapiens/cgi/send /var/www/hynsphax/cgi-bin/send
+	chown root:www-data /var/www/hynsphax/cgi-bin/send
 	chmod 550 /var/www/hynsphax/cgi-bin/send
 
-	cp netsapiens/cgi/faxFile /var/www/hynsphax/cgi-bin/faxFile
-	chgrp www-data /var/www/hynsphax/cgi-bin/faxFile
+	\cp netsapiens/cgi/faxFile /var/www/hynsphax/cgi-bin/faxFile
+	chown root:www-data /var/www/hynsphax/cgi-bin/faxFile
 	chmod 550 /var/www/hynsphax/cgi-bin/faxFile
 
-	mkdir /var/www/hynsphax/lib
-	chgrp www-data /var/www/hynsphax/lib
+	mkdir -p /var/www/hynsphax/lib
+	chown root:www-data /var/www/hynsphax/lib
 	chmod 750 /var/www/hynsphax/lib
-	cp common/hynsphax-common.pl /var/www/hynsphax/lib/hynsphax-common.pl
+
+	\cp common/hynsphax-common.pl /var/www/hynsphax/lib/hynsphax-common.pl
+	chown root:root /var/www/hynsphax/lib/hynsphax-common.pl
 	chmod 444 /var/www/hynsphax/lib/hynsphax-common.pl
-	cp common/hynsphax-common-px.pl /var/www/hynsphax/lib/hynsphax-common-px.pl
+
+	\cp common/hynsphax-common-px.pl /var/www/hynsphax/lib/hynsphax-common-px.pl
+	chown root:root /var/www/hynsphax/lib/hynsphax-common-px.pl
 	chmod 444 /var/www/hynsphax/lib/hynsphax-common-px.pl
 
-	cp netsapiens/hynsphax.conf /etc/netsapiens/hynsphax.conf
+	# Note - for upgrade, either copy in new config file and restore local
+	#        changes, or apply new configuration options to existing file
+	\cp netsapiens/hynsphax.conf /etc/netsapiens/hynsphax.conf
 	chgrp www-data /etc/netsapiens/hynsphax.conf
 	chmod 640 /etc/netsapiens/hynsphax.conf

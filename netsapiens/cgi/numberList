@@ -1,14 +1,14 @@
 #! /usr/bin/perl
 #
 # Copyright 2019-2020 Paul B. Henson <henson@acm.org>
-# 
+#
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # Please see the LICENSE file for further details, or visit the URL
-# 
+#
 #         https://www.gnu.org/licenses/
 
 use strict;
@@ -43,6 +43,8 @@ _logd("area_code = $area_code") if defined($area_code);
 my $subscriber = $q->param('subscriber');
 _logd("subscriber = $subscriber") if defined($subscriber);
 
+my $ssl = hynsphax_config('phaxio_ssl') // 1;
+
 my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
 $dbh_config or
 	cgi_fail('internal error', 'failed to connect to config db');
@@ -64,7 +66,7 @@ while (($number, $city, $state, $cost, $destinations, $provision_date) =
 	_logd("row = $number, " . (defined($city) ? $city : '') . ', ' .
 	      (defined($city) ? $city : '') . ', ' .
 	      (defined($state) ? $state : '') . ', ' .
-	      (defined($cost) ? $cost : '') . ', ' . 
+	      (defined($cost) ? $cost : '') . ', ' .
 	      (defined($destinations) ? $destinations : '') . ', ' . "$provision_date");
 
 	next if ($number eq 'default');
@@ -124,7 +126,7 @@ while (($number, $city, $state, $cost, $destinations, $provision_date) =
 
 
 	if (defined($ns_host) && defined($ns_domain) && defined($ns_user)) {
-		my $callback_url = "http://$ns_host/ns-api/?object=phaxio&action=create&" .
+		my $callback_url = "http" . ($ssl ? 's' :'') . "://$ns_host/ns-api/?object=phaxio&action=create&" .
 				   "domain=$ns_domain&uid=$ns_user\@$ns_domain";
 		$number_json .= ',"callback_url":"' . json_escape($callback_url);
 	}

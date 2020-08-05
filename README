@@ -4,7 +4,10 @@ Introduction
 hynsphax is intended to provide integration between the HylaFAX fax services
 platform (https://www.hylafax.org/) and the netsapiens SNAPsolution Unified
 Communications Platform PBX product (https://netsapiens.com/snapsolution/) by
-emulating the Phaxio API (https://www.phaxio.com/docs/api/).
+emulating the Phaxio API (https://www.phaxio.com/docs/api/). It can also
+integrate with the ATA Connector software from FaxBack
+(http://www.faxback.com/) to allow use of HylaFAX as a backend fax service for
+fax over HTTPS supporting ATA devices.
 
 It was developed using the HylaFAX Enterprise product (https://www.ifax.com/)
 but would probably work with the open source edition with potentially some
@@ -79,6 +82,14 @@ it. This file is in Perl syntax, you should run “perl -c
 /etc/hylafax/hynsphax.conf” after updating it to validate there are no errors.
 
 
+* FaxBack ATA connector
+
+The faxback ATA connector requires a URL to the endpoint for its API. This
+value will be "http(s)://your.hylafax.server/cgi-bin/fb". If you have
+more than one hylafax server, you will need a load balancer of some type to
+direct a single URL to the backend servers as appropriate.
+
+
 * Database
 
 The configuration database contains a table named “hy_servers” which provides a
@@ -92,19 +103,153 @@ entry in this table; for example:
 			values (‘hyfax2.my.domain’, ‘02’);
 
 
-There is a another table named ns_servers which contains a mapping from
-netsapiens server host names to the order they should use when attempting to
-contact the HylaFAX servers. The order is a comma separated list of node IDs.
-The netsapiens server will attempt to contact each one in turn, stopping once a
-transaction is successful, or failing if it is unable to successfully process
-the transaction on any of the nodes. For example, if there are two netsapiens
-servers, each of which should access the above example HylaFAX servers with
-reversed priority, you might create the entries:
+Another table named ns_servers contains a mapping from netsapiens server host
+names to the order they should use when attempting to contact the HylaFAX
+servers. The order is a comma separated list of node IDs.  The netsapiens
+server will attempt to contact each one in turn, stopping once a transaction is
+successful, or failing if it is unable to successfully process the transaction
+on any of the nodes. For example, if there are two netsapiens servers, each of
+which should access the above example HylaFAX servers with reversed priority,
+you might create the entries:
 
 	insert into ns_servers (hostname, hy_node_order)
 			values (‘ns1.my.domain’, ’01,02’);
 	insert into ns_servers (hostname, hy_node_order)
 			values (‘ns2.my.domain’, ’02,01’);
+
+
+A table named fb_atas contains configuration details for any FaxBack ATAs
+integrated into the hynsphax system. It includes the columns:
+
+- mac (required): The mac address of the ATA.
+
+- active (required): Whether or not the ATA is currently active. If an ATA is
+                     not active, inbound faxes will still be delivered to it,
+		     but outbound faxes will be refused.
+
+- provisioned (required): Whether or not the ATA has been provisioned. This is
+                          updated to true once the AccountProvisioningDetail
+			  API call has been made for the its mac address.
+
+- username (required): The username to assign to the ATA.
+
+- password (required): The password to assign to the ATA.
+
+- hyns_options: Per device hynsphax options to apply to the ATA as detailed
+                below.
+
+- ata_options: Per device faxback ATA options as detailed below.
+
+- line_options: Per line faxback ATA options as detailed below.
+
+
+All of the options in the database columns are supplied as "option=value" pairs
+separated by commas; in the case of the line_options column, there can be
+multiple sets of options separated by the '|' character for ATAs that have more
+than one line. If an entry with the mac "default" exists, the options set in
+this entry are applied to all ATAs as defaults, and can be overridden on a per
+ATA basis. (Note that a username/password is required for all entries, but the
+username/password for the default entry is not used and can be any value. You
+should assign it a username that will not conflict with your ATA username
+layout and a random password).
+
+The hyns_options column has the following parameters:
+
+allow_reprovision: By system default a faxback ATA is only allowed to be
+                   provisioned once, as this operation takes place with no
+                   authentication. If an ATA needs to be reprovisioned, its
+                   record in the database must be updated to mark it as
+		   unprovisioned. If you want to allow reprovisioning at any
+		   time with no manual intervention, you can set this option
+		   to 1. If you set it to 1 on the default ATA entry, you can
+		   override it back to 0 on an individual ATA entry.
+
+provision_password: There are two options to initialize an ATA's password;
+                    either the user can enter it locally on the ATA after an
+		    initial provisioning, or the provisioning process can
+		    include it. By system default the password is not included
+		    as provisioning in this manner does not provide a valid
+		    chain of trust. To enable provisioning of the password,
+		    you can set this option to 1. If you set it to 1 on the
+		    default ATA entry, you can override it back to 0 on an
+		    individual ATA entry.
+
+poll_outbound_status: When an outbound fax is received from an ATA to be
+                      delivered, the ATA can optionally poll the API to
+		      determine the success or failure of the job. Depending
+		      on the value of the ATA line option Notifications for
+		      the source phone number, once the status of the
+		      submitted job has been received, the ATA can print a
+		      message on the originating fax machine. The system
+		      default for this option is enabled, you can set it to
+		      0 to disable the status check. If you set it to 0 on the
+		      default ATA entry, you can override it back to 1 on an
+		      individual ATA entry. For ATAs which have multiple
+		      lines, you can set it on a per-line basis using the
+		      syntax "(1,0,1,1)" (which would disable it on line 2 and
+		      enable it on all others).
+
+
+The ata_options column has the following parameters:
+
+CallAhead: Specifies the ATA behavior for placing an initial VoIP call prior
+           to sending the fax via HTTPS. Valid values are:
+
+                Always - Place a VoIP call and wait for a T.38 reinvite from
+		         the VoIP service. If that reinvite is received, then
+			 the VoIP leg is hung up, and the ATA's call is routed
+			 to the fax service via HTTPS.
+
+                Never - All faxes will be immediately routed to the fax server
+		        via HTTPS (default).
+
+                Lookup - If the number dialed by the ATA does not have a
+		         history of reliable fax transmission, then an initial
+			 VoIP call will be placed by the ATA to check for a
+			 T.38 reinvite before delivering fax over HTTPS.
+			 Otherwise the fax will be immediately routed via
+			 HTTPS.
+
+ClientLog: Determines if the ATA should upload its logs to the server. Valid
+           values are:
+
+	        Never - Never send logs to the server.
+
+		OnErrors - Only send logs to the server for failed faxes (default).
+
+		Always - Always send logs to the server.
+
+TimeZoneId: Configures a time zone to apply to dates and times contained in
+            delivery and non delivery notifications to be used rather than the
+	    server's time zone. The value must be a Microsoft .NET
+	    TimeZoneInfo.Name or the string "*" for "Standard Time".
+
+
+The line_options column has the following parameters:
+
+Notifications: Indicates the type of confirmations which should be printed on
+               the fax machine. Valid values are:
+
+	            None - No notifications will be printed (default).
+
+		    NonDelivery - Only print notifications if there was a
+		                  problem sending the fax.
+
+		    Delivery - Only print notifications if the fax was sent
+		               successfully.
+
+                    DeliveryAndNonDelivery - Print a notification after each
+		                             fax is finished.
+
+PhoneNumber: The phone number associated with this line on the ATA. Note that
+             this must match the phone number configured in the fax table as
+	     described later in this document. The PhoneNumber option can be
+	     used in the default entry, but it would not make much sense to do
+	     so.
+
+StripRowsFromImage: Remove this many rows of pixels from the fax image before
+                    sending to avoid double headers on outbound faxes (default
+		    0).
 
 
 The last table in the configuration database is the linchpin of the system;
@@ -145,19 +290,52 @@ specific column definitions are:
 
 The destination column lists one or more groups of destinations, separated by
 commas, where each group consists of one or more destination, separated by the
-vertical bar/pipe symbol (|). 
+vertical bar/pipe symbol (|).
 
-There are currently only two supported destinations. First is the "null"
-destination, which simply discards any incoming faxes. Second is the
-"netsapiens" destination, which routes a fax to a netsapiens server. The format
-for a netsapiens destination is:
+There are currently three supported destinations. First is the "null"
+destination, which simply discards any incoming faxes.
 
-	netsapiens:host=<hostname>,user=<user>
+Second is the "netsapiens" destination, which routes a fax to a netsapiens
+server. The format for a netsapiens destination is:
 
+	netsapiens:host=<hostname>,user=<user>[,ssl=<0|1>]
 
-for example:
+where host is the netsapiens server name, user is the netsapiens user on that
+server, and ssl optionally overrides the system default configuration for
+whether or not to use ssl when processing phaxio API calls to netsapiens.
+
+For example:
 
 	netsapiens:host=ns01.mydomain.com,user=101
+
+
+Third is the "faxback" destination, which routes a fax to a faxback ATA
+through the FaxBack ATA Connector software. The format for a faxback is:
+
+	faxback:host=<hostname>,ata=<ataspec>,number=<number>[,guid=<guid>][,ssl=<0|1>],[port=<port>]
+
+where hostname is the name of a system running the ATA Connector software,
+number is a phone number defined in the fax table to deliver to, ssl
+optionally overrides the system default configuration for whether or not to
+use ssl when processing API calls to the facback ATA Connector, and the
+optional port defines which port to connect to if not the standard 80/443.
+The optional guid parameter is only required if using a hosted version of the
+ATA Connector software, and the ATA specification is:
+
+	[<ata_number>@][<searchkey>:]<id>
+
+where ata_number is an optional phone number to use for for the API call to
+the ATA rather than the incoming fax number, searchkey is what field to use to
+find the ata rather than the default username address, and id is the
+identifier of the ATA to deliver to.
+
+For example:
+
+	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
+	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212,ssl=0
+	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
+	faxback:host=myfb.mydomain.com,ata=mac:ABCD12340044,number=+19095551212
+	faxback:host=myfb.mydomain.com,ata=6265551212@ata-501,number=+19095551212
 
 
 Destination groups are processed in order, as is each option in a destination
@@ -213,7 +391,7 @@ hourly rate.
 License/Copyright
 -----------------
 
-Copyright 2019 Paul B. Henson <henson@acm.org>
+Copyright 2019-2020 Paul B. Henson <henson@acm.org>
 
 hynsphax is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

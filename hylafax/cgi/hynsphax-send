@@ -1,14 +1,14 @@
 #! /usr/bin/perl
 #
 # Copyright 2019-2020 Paul B. Henson <henson@acm.org>
-# 
+#
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # Please see the LICENSE file for further details, or visit the URL
-# 
+#
 #         https://www.gnu.org/licenses/
 
 use strict;
@@ -118,9 +118,9 @@ my $caller_id = $caller_id_qh->fetchrow_array();
 $caller_id eq $params{caller_id} or
 	cgi_fail('invalid number', "caller_id $params{caller_id} not found");
 
-my $dbh_queue = dbi_connect(hynsphax_config('db_queue_list'));
-$dbh_queue or
-	cgi_fail('internal error', 'failed to connect to queue db');
+my $dbh_hy_queue = dbi_connect(hynsphax_config('db_hy_queue_list'));
+$dbh_hy_queue or
+	cgi_fail('internal error', 'failed to connect to hy queue db');
 
 # look up our server node identifier
 my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
@@ -155,9 +155,9 @@ if ($mime_processor ne 'hylafax') {
 	my $vars = { F => $params{filename},
 		     D => $tmpdir,
 		};
-	
+
 	$mime_processor = var_swap($vars, $mime_processor);
-	
+
 	my @convert_cmd;
 	if (exists($mime_options->{use_shell}) && $mime_options->{use_shell} eq 'true') {
 		_logd("executing $mime_processor under shell");
@@ -226,14 +226,14 @@ else {
 }
 
 if (defined($params{callback_url})) {
-	_logd("adding $job_id to outbound status queue");
+	_logd("adding $job_id to outbound hy queue");
 
-	my $queue_qh = query($dbh_queue, 'insert into outbound (id, received_time, callback_url, ' .
+	my $hy_queue_qh = query($dbh_hy_queue, 'insert into outbound (id, received_time, callback_url, ' .
 					 'last_state, last_status) values (?, ?, ?, ?, ?)',
 					  $job_id, time(), $params{callback_url}, '?', 'submitted');
 
-	$queue_qh or
-		_log("error: failed to execute outbound queue query");
+	$hy_queue_qh or
+		_log("error: failed to execute outbound hy queue query");
 }
 else {
 	_logd("no callback URL found, fire and forget");

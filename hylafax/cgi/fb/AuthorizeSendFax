@@ -1,0 +1,71 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use CGI ();
+use DBI ();
+use Unix::Syslog ();
+use XML::Simple ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-AuthorizeSendFax', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $q = new CGI();
+
+my $path_info = $q->path_info(); $path_info =~ s#^/##;
+$path_info or
+	cgi_fail(400, "no username or number provided", "%s");
+
+my ($username, $called_number) = split(/\//, $path_info);
+
+_logd("user $username destination $called_number");
+
+my $ata = ata_record($dbh_config, 'username', $username);
+
+defined($ata) or
+	cgi_fail(401, "invalid username", "%s - $username");
+
+ref($ata) or
+	cgi_fail(500, "internal error", "ata db lookup failed - $ata");
+
+$ata->{active} or
+	cgi_fail(401, "ata not active", "%s - $ata->{mac}");
+
+# Optionally check specific destination number here,
+# return 401 to deny fax
+
+print "Content-type: text/xml\n\n";
+
+print '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+print "<AuthorizeSendFax>\n";
+
+# Optionally check for custom CallAhead setting per destination
+# and set parameter to override for this specific fax
+#print "\t<CallAhead>$call_ahead</CallAhead>\n";
+#
+print "</AuthorizeSendFax>\n";
+
+exit(0);

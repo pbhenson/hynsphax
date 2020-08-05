@@ -1,0 +1,84 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-AccountProvisioningDetail', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $q = new CGI();
+
+my $ata_mac = $q->path_info();
+$ata_mac =~ s#^/##;
+
+$ata_mac or
+	cgi_fail(400, "no ata mac provided", "%s");
+
+$ata_mac = uc($ata_mac);
+$ata_mac =~ /^[0-9A-F]{12}$/ or
+	cgi_fail(400, "invalid ata mac", "%s - $ata_mac");
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $ata = ata_record($dbh_config, 'mac', $ata_mac);
+
+defined($ata) or
+	cgi_fail(404, "ata not found", "%s - $ata_mac");
+
+ref($ata) or
+	cgi_fail(500, "internal error", "ata db lookup failed - $ata");
+
+my $allow_reprovision = $ata->{hyns_options}{allow_reprovision};
+_logd("allow_reprovision = $allow_reprovision");
+
+!$ata->{provisioned} || $allow_reprovision or
+	cgi_fail(403, 'ata already provisioned', "%s - $ata->{mac}");
+
+my $provision_password = $ata->{hyns_options}{provision_password};
+_logd("provision_password = $provision_password");
+
+my $xml = ata_xml($ata, $provision_password);
+_logd($xml, 2);
+
+print "Content-type: text/xml\n\n";
+
+print '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+print $xml;
+
+if (!$ata->{provisioned}) {
+	my $ata_update_qh = query($dbh_config,
+				  'update fb_atas set provisioned = true where mac = ?',
+				  $ata_mac);
+	if (!$ata_update_qh) {
+		_log("error: failed to update ata provisioned flag - $ata_mac");
+	}
+	elsif ($ata_update_qh>rows() != 1) {
+		_log("warning: update ata provisioned flag was no-op - $ata_mac");
+	}
+}
+
+exit(0);

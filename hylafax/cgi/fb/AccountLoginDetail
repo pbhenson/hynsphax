@@ -1,0 +1,44 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-AccountLoginDetail', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $ata = cgi_auth($dbh_config);
+
+my $xml = ata_xml($ata, 0);
+_logd($xml, 2);
+
+print "Content-type: text/xml\n\n";
+
+print '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+print $xml;
+
+exit(0);

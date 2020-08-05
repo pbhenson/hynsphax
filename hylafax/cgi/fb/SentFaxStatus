@@ -1,0 +1,110 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use CGI ();
+use DBI ();
+use Unix::Syslog ();
+use XML::Simple ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-SentFaxStatus', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $dbh_fb_queue;
+my $db_fb_queue_list = hynsphax_config('db_fb_queue_list');
+if ($db_fb_queue_list) {
+	$dbh_fb_queue = dbi_connect($db_fb_queue_list);
+	$dbh_fb_queue or
+		cgi_fail(500, 'internal error', 'failed to connect to fb queue db');
+}
+else {
+	$dbh_fb_queue = $dbh_config;
+}
+
+my $q = new CGI();
+
+my $q_id_list = $q->path_info(); $q_id_list =~ s#^/##;
+$q_id_list or
+	cgi_fail(400, "no queue id provided", "%s");
+
+_logd("queue id list = $q_id_list");
+
+my ($fbq_id_qh) = query($dbh_fb_queue, 'select * from fb_outbound_queue where fb_id = ?');
+$fbq_id_qh or
+	cgi_fail(500, 'internal error', 'failed to prepare fb queue query');
+
+print "Content-type: text/xml\n\n";
+
+print '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+print "<SentFaxStatus>\n";
+
+foreach my $q_id (split(/,/, $q_id_list)) {
+	my $q_results = query($dbh_fb_queue, $fbq_id_qh, $q_id);
+
+	if (!$q_results) {
+		_log("error: fb queue query failed, skipping $q_id");
+		next;
+	}
+
+	my $q_hash = $q_results->fetchrow_hashref();
+	if (!$q_hash) {
+		_log("error: fb queue id $q_id not found, synthesizing failure");
+		$q_hash = { fb_id => $q_id, fb_username => undef, retries => 0, pages => 0,
+			    state => 'Failure', status => -1, message => 'fax not found in queue' };
+	}
+
+	my $xml = "<FaxStatus>\n";
+	$xml .= "<Id>$q_hash->{fb_id}</Id>\n";
+	if (defined($q_hash->{fb_username})) {
+		$xml .= "<UserName>$q_hash->{fb_username}</UserName>\n";
+	}
+	else {
+		$xml .= "<UserName null=\"true\" />\n";
+	}
+	$xml .= "<RemoteStationId null=\"true\" />\n";
+	if (defined($q_hash->{retries})) {
+		$xml .= "<Retries>$q_hash->{retries}</Retries>\n";
+	}
+	$xml .= "<BaudRate>0</BaudRate>\n";
+	$xml .= "<ConnectionSeconds>0</ConnectionSeconds>\n";
+	if (defined($q_hash->{pages})) {
+		$xml .= "<PagesTransferred>$q_hash->{pages}</PagesTransferred>\n";
+	}
+	$xml .= "<State>$q_hash->{state}</State>\n";
+	$q_hash->{status} //= 0;
+	$xml .= "<Status>$q_hash->{status}</Status>\n";
+	if (defined($q_hash->{message})) {
+		$xml .= "<StatusMsg>$q_hash->{message}</StatusMsg>\n";
+	}
+	$xml .= "</FaxStatus>\n";
+
+	_logd("xml = $xml");
+	print $xml;
+}
+
+print "</SentFaxStatus>\n";
+
+exit(0);

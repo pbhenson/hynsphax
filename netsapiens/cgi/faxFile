@@ -1,14 +1,14 @@
 #! /usr/bin/perl
 #
 # Copyright 2019-2020 Paul B. Henson <henson@acm.org>
-# 
+#
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # Please see the LICENSE file for further details, or visit the URL
-# 
+#
 #         https://www.gnu.org/licenses/
 
 use strict;
@@ -63,10 +63,12 @@ $type =~ /^(p|l|s)$/ or
 
 _logd("connecting to $server for id $id type $type");
 
+my $ssl = hynsphax_config('phaxio_ssl') // 1;
+
 my $ua = LWP::UserAgent->new(timeout => 60);
 
-# should be https but http for testing
-my $response = $ua->post("http://$server/cgi-bin/hynsphax-faxFile", Content_Type => 'form-data',
+my $response = $ua->post("http" . ($ssl ? 's' : '') . "://$server/cgi-bin/hynsphax-faxFile",
+			 Content_Type => 'form-data',
 			 Content => [ id => $id,
 				      type => $type,
 				      api_key => $api_key,

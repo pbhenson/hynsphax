@@ -20,3 +20,14 @@ create table ns_servers(
 	hostname varchar(255) not null primary key,
 	hy_node_order varchar(1024) not null
 );
+
+create table fb_atas(
+	mac varchar(12) not null primary key,
+	active boolean not null,
+	provisioned boolean not null,
+	username varchar(128) not null unique key,
+	password varchar(128) not null,
+	hyns_options varchar(1024),
+	ata_options varchar(1024),
+	line_options varchar(2048)
+);

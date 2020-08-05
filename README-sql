@@ -1,4 +1,4 @@
-hynsphax requires two different databases for operation.
+hynsphax requires two or three different databases for operation.
 
 The first one is the central configuration database, which must be available to
 all HylaFAX and netsapiens servers. Testing was performed using mariadb; a
@@ -13,17 +13,33 @@ that are in the deployment.
 
 The second is the local queuing database, which exists separately on each
 HylaFAX server. It is recommended to use sqlite for these instances, and a
-sample schema named queue-sqlite.sql is available in the sql subdirectory. The
-following commands can be used to initialize the queue database on each HylaFAX
-server:
+sample schema named hy-queue-sqlite.sql is available in the sql subdirectory.
+The following commands can be used to initialize the queue database on each
+HylaFAX server:
 
 	mkdir /var/spool/hylafax/config/hynsphax
 	chown hylafax:apache /var/spool/hylafax/config/hynsphax
 	chmod 770 /var/spool/hylafax/config/hynsphax
-	sqlite3 /var/spool/hylafax/config/hynsphax/queue.db < sql/queue-sqlite.sql
+	sqlite3 /var/spool/hylafax/config/hynsphax/queue.db < sql/hy-queue-sqlite.sql
 	chown hylafax:apache /var/spool/hylafax/config/hynsphax/queue.db
 	chmod 660 /var/spool/hylafax/config/hynsphax/queue.db
 
 
 Again, any DBI compatible database can be used for the local queuing database,
 as long as the appropriate tables are created as necessary for your selection.
+
+The third database is the central faxback queuing database, which shares
+faxback queue state across all hynsphax servers to accomodate faxback HA. A
+sample schema is available in the sql subdirectory in the file
+fb-queue-mariadb.sql which will create the necessary tables. This database may
+be combined with the central configuration database or as a separate database
+depending on the deployment needs. By default the central config database will
+be used. If you wish to use a separate database, update the hylafax
+hynsphax.conf configuration to uncomment the db_fb_queue_list parameter and set
+it to the appropriate database list.
+
+Note that while the local hylafax queue entries generally maintained in sqlite
+on each server are ephemeral and do not persist, the entries in the two
+fastback queues stored in a central database are not automatically cleaned up.
+You should use whatever mechanism is appropriate for database management in
+your environment to purge old queue entries as necessary.

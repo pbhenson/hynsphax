@@ -1,14 +1,14 @@
 #! /usr/bin/perl
 #
 # Copyright 2019-2020 Paul B. Henson <henson@acm.org>
-# 
+#
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # Please see the LICENSE file for further details, or visit the URL
-# 
+#
 #         https://www.gnu.org/licenses/
 
 use strict;
@@ -25,6 +25,7 @@ my $now = time();
 
 require '/etc/hylafax/hynsphax.conf';
 require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
 
 my $debug = hynsphax_config('debug') // 0;
 _log_debug($debug);
@@ -44,6 +45,8 @@ my $hf_conf = read_hf_config();
 my $dest_handlers = {
 	# generate phaxio compatible callback to a netsapiens server
 	netsapiens => \&netsapiens_hander,
+	# pass fax to a faxback ata connector instance
+	faxback => \&faxback_hander,
 	# dump on floor
 	null => sub { return 1; },
 };
@@ -54,13 +57,25 @@ if (!$dbh_config) {
 	exit(1);
 }
 
-my $dbh_queue = dbi_connect(hynsphax_config('db_queue_list'));
-if (!$dbh_queue) {
-	_logp("error: failed to connect to config database");
+my $dbh_hy_queue = dbi_connect(hynsphax_config('db_hy_queue_list'));
+if (!$dbh_hy_queue) {
+	_logp("error: failed to connect to hy queue database");
 	exit(1);
 }
 
-# look up our server node identifier
+my $dbh_fb_queue;
+my $db_fb_queue_list = hynsphax_config('db_fb_queue_list');
+if ($db_fb_queue_list) {
+	$dbh_fb_queue = dbi_connect($db_fb_queue_list);
+	if (!$dbh_fb_queue) {
+		_logp("error: failed to connect to fb queue database");
+		exit(1);
+	}
+}
+else {
+	$dbh_fb_queue = $dbh_config;
+}
+
 my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
 if (!$node_qh) {
 	_logp("error: failed to look up server node");
@@ -289,7 +304,7 @@ sub process_fax {
 	}
 	_logd("found destinations $dest_list");
 
-	my ($fail_qh) = query($dbh_queue, 'insert into inbound ' .
+	my ($fail_qh) = query($dbh_hy_queue, 'insert into inbound ' .
 					  '(id, received_time, pages, cid_from, cid_to, destination, ' .
 					  'retry_count, retry_time) values ' .
 					  '(?, ?, ?, ?, ?, ?, 0, ?)');
@@ -305,12 +320,12 @@ sub process_fax {
 		if (!$status) {
 			_logd("all destination options failed, queueing for retry");
 
-			$status = query($dbh_queue, $fail_qh, $id, $now, $faxinfo->{Pages},
+			$status = query($dbh_hy_queue, $fail_qh, $id, $now, $faxinfo->{Pages},
 					$cid_from, $cid_to, $dest, $now);
 
 			if (!$status) {
 				_log("error: failed to insert ($id, $now, $faxinfo->{Pages}, " .
-				     "$cid_from, $cid_to, $dest, $now) into inbound queue");
+				     "$cid_from, $cid_to, $dest, $now) into inbound hy queue");
 			}
 		}
 	}
@@ -325,25 +340,25 @@ sub process_queue {
 		return 1;
 	}
 
-	my ($remove_qh) = query($dbh_queue, 'delete from inbound where ' .
+	my ($remove_qh) = query($dbh_hy_queue, 'delete from inbound where ' .
 					     'id = ? and destination = ?');
 	if (!$remove_qh) {
 		_logp("error: failed to prepare remove query");
 		return 1;
 	}
 
-	my ($retry_qh) = query($dbh_queue, 'update inbound set retry_count = ?, retry_time = ? ' .
+	my ($retry_qh) = query($dbh_hy_queue, 'update inbound set retry_count = ?, retry_time = ? ' .
 					   'where id = ? and destination = ?');
 	if (!$retry_qh) {
 		_logp("error: failed to prepare retry query");
 		return 1;
 	}
 
-	my $inbound_qh = query($dbh_queue, 'select id, received_time, pages, cid_from, cid_to, '.
+	my $inbound_qh = query($dbh_hy_queue, 'select id, received_time, pages, cid_from, cid_to, '.
 					   'destination, retry_count, retry_time from inbound');
 
 	if (!$inbound_qh) {
-		_logp("error: failed to query inbound queue");
+		_logp("error: failed to query inbound hy queue");
 		return 1;
 	}
 
@@ -351,7 +366,7 @@ sub process_queue {
 	while (($id, $received_time, $pages, $cid_from, $cid_to, $dest,
 		$retry_count, $retry_time) = $inbound_qh->fetchrow_array()) {
 
-		_logd("queue entry $id, $received_time, $pages, $cid_from, $cid_to, " .
+		_logd("hy queue entry $id, $received_time, $pages, $cid_from, $cid_to, " .
 		     "$dest, $retry_count, $retry_time");
 
 		$retry_count++;
@@ -377,9 +392,9 @@ sub process_queue {
 			_logd("retrying $dest");
 			$status = process_dest($id, $received_time, $pages, $cid_from, $cid_to, $dest);
 			if (!$status) {
-				_logd("retry failed, updating queue entry");
+				_logd("retry failed, updating hy queue entry");
 
-				$status = query($dbh_queue, $retry_qh, $retry_count, $now,
+				$status = query($dbh_hy_queue, $retry_qh, $retry_count, $now,
 						$id, $dest);
 				if (!$status) {
 					_log("error: failed to update ($id, $dest) retry status");
@@ -394,13 +409,13 @@ sub process_queue {
 			}
 		}
 
-		 _logd("removing from inbound queue");
-		$status = query($dbh_queue, $remove_qh, $id, $dest);
+		 _logd("removing from inbound hy queue");
+		$status = query($dbh_hy_queue, $remove_qh, $id, $dest);
 		if (!$status) {
-			_log("error: failed to remove from inbound queue");
+			_log("error: failed to remove from inbound hy queue");
 		}
 		elsif ($status->rows() != 1) {
-			_log("error: not removed from inbound queue");
+			_log("error: not removed from inbound hy queue");
 		}
 	}
 
@@ -498,12 +513,25 @@ sub netsapiens_hander {
 		_logd("netsapiens_hander: $opt = $value");
 		$options->{$opt} = $value;
 	}
-	
+	foreach (qw(host domain user)) {
+		if (!exists($options->{$_})) {
+			_log("error: phaxio notify missing required $_ option");
+			return 0;
+		}
+	}
+
 	if (!ref($ua)) {
 		$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
 	}
 
-	my $url = 'https://' . $options->{host} . '/ns-api/?object=phaxio&action=create&domain=';
+	my $phaxio_ssl = $options->{ssl} // hynsphax_config('phaxio_ssl') // 1;
+
+	my $url = $phaxio_ssl ? 'https://' : 'http://';
+	$url .= $options->{host};
+	if (exists($options->{port})) {
+		$url .= ':' . $options->{port};
+	}
+	$url .= '/ns-api/?object=phaxio&action=create&domain=';
 	$url .= uri_escape($options->{domain}) . '&uid=';
 	$url .= uri_escape($options->{user}) . '@' . uri_escape($options->{domain});
 	_logd("url = $url");
@@ -535,7 +563,7 @@ sub netsapiens_hander {
 	if ($@) {
 		_log("error: phaxio notify post to $options->{host} failed - $@");
 		return 0;
-	}	
+	}
 
 	if (!$response->is_success()) {
 		_log("error: phaxio notify to $options->{host} failed - " . $response->status_line());
@@ -552,3 +580,161 @@ sub netsapiens_hander {
 	return 1;
 }
 
+my $fb_queue_qh;
+sub faxback_hander {
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
+
+	my $options;
+	foreach my $h_opt (split(/,/, $handler_options)) {
+		my ($opt, $value) = split(/=/, $h_opt);
+
+		_logd("faxback_hander: $opt = $value");
+		$options->{$opt} = $value;
+	}
+	foreach (qw(host ata)) {
+		if (!exists($options->{$_})) {
+			_log("error: faxback deliver missing required $_ option");
+			return 0;
+		}
+	}
+
+	_logd("from $cid_from to $cid_to @ $options->{ata} via $options->{host}");
+	_logd("hosting guid $options->{guid}") if exists($options->{guid});
+
+	my $ata_number;
+	if ($options->{ata} =~ /@/) {
+		($ata_number, $options->{ata}) = split(/@/, $options->{ata});
+		_logd("overriding ata_number to $ata_number");
+	}
+	else {
+		$ata_number = $cid_to;
+	}
+
+	my $number_strip_plus = hynsphax_config('fb_number_strip_plus') // 1;
+	_logd("number_strip_plus = $number_strip_plus");
+	if ($ata_number =~ /^\+/ && $number_strip_plus) {
+		$ata_number =~ s/^\+//;
+		_logd("stripping plus from ata number");
+	}
+
+	my ($ata_key, $ata_value);
+	if ($options->{ata} =~ /:/) {
+		($ata_key, $ata_value) = split(/:/, $options->{ata});
+	}
+	else {
+		($ata_key, $ata_value) = ('username', $options->{ata});
+	}
+
+	_logd("dest ata $ata_key $ata_value");
+	my $ata = ata_record($dbh_config, $ata_key, $ata_value);
+
+	if (!defined($ata)) {
+		_log("error: faxback ata $ata_key $ata_value not found");
+		return 0;
+	}
+
+	if (!ref($ata)) {
+		_log("error: faxback ata db lookup failed - $ata");
+		return 0;
+	}
+
+	if (!$ata->{active} && !hynsphax_config('fb_inactive_deliver')) {
+		_log("error: faxback ata $ata_key $ata_value not active");
+		return 0;
+	}
+
+	my $line_index;
+	foreach my $line (@{$ata->{line_options}}) {
+		if ($line->{PhoneNumber} eq $ata_number) {
+			$line_index = $line->{Index};
+		}
+	}
+
+	if (!defined($line_index)) {
+		_log("error: number $ata_number not associated with faxback ata $ata_key $ata_value");
+		return 0;
+	}
+	_logd("line_index = $line_index");
+
+	if (!ref($ua)) {
+		$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
+	}
+
+	my $fb_ssl = $options->{ssl} // hynsphax_config('fb_ssl') // 1;
+
+	my $url = $fb_ssl ? 'https://' : 'http://';
+	$url .= $options->{host};
+	if (exists($options->{port})) {
+		$url .= ':' . $options->{port};
+	}
+	$url .= '/nsps/nsps.aspx?target=atamime';
+	_logd("url = $url");
+
+	my $response;
+	my $post_content = [
+		ServiceName => 'ConnectorService',
+		Function => 'DeliverImage',
+		AccountId => $ata->{username},
+		PhoneNumber => $ata_number,
+		MessageType => 1,
+		CallingNumber => $cid_from,
+		CallingStationId => $cid_from,
+		'faximage.tif' => [ "$hf_dir/recvq/fax${id}.tif",
+				    'faximage.tif' ],
+		];
+	if (exists($options->{guid})) {
+		push(@{$post_content}, ProviderGuid => $options->{guid});
+	}
+
+	eval {
+		$response = $ua->post($url, Content_Type => 'form-data', Content => $post_content);
+	};
+
+	if ($@) {
+		_log("error: faxback post to $options->{host} failed - $@");
+		return 0;
+	}
+
+	if (!$response->is_success()) {
+		_log("error: faxback post to $options->{host} failed - " . $response->status_line());
+		_logd("failure content - " . $response->content());
+		return 0;
+	}
+	elsif ($response->code() != 202) {
+		_logd("warning: faxback post status " . $response->code() . " != 202");
+	}
+	else {
+		_logd("faxback post successful");
+	}
+
+	my $fb_id = $response->content();
+	chomp($fb_id);
+
+	if (length($fb_id) == 0) {
+		_log("error: faxback post to $options->{host} missing returned fb_id");
+		return 0;
+	}
+
+	$fb_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ or
+		_log("warning: unexpected fb_id format $fb_id");
+
+	if (!ref($fb_queue_qh)) {
+		($fb_queue_qh) = query($dbh_fb_queue, q{ insert into fb_inbound_queue (fb_id, fb_username,
+							 fb_ata_mac, hy_node_id, hy_queue_id, from_number,
+							 to_number, pages, hy_received_time, hy_sent_time)
+							 values (?, ?, ?, ?, ?, ?, ?, ?, from_unixtime(?),
+							 now()) });
+		if (!$fb_queue_qh) {
+			_log("error: failed to prepare fb outbound queue insert query for $fb_id");
+			return 1;
+		}
+	}
+
+	my $q_status = query($dbh_fb_queue, $fb_queue_qh, $fb_id, $ata->{username}, $ata->{mac},
+			     $node_id, $id, $cid_from, $cid_to, $pages, $received_time);
+
+	$q_status or
+		_log("error: failed to insert $fb_id into fb outbound queue");
+
+	return 1;
+}

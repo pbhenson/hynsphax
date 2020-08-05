@@ -1,0 +1,224 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use CGI ();
+use Data::UUID ();
+use DBI ();
+use Sys::Hostname ();
+use Unix::Syslog ();
+use XML::Simple ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-SendFax', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $ata = cgi_auth($dbh_config);
+
+$ata->{active} or
+	cgi_fail(403, "ata not active", "%s - $ata->{mac}");
+
+my $hostname = Sys::Hostname::hostname();
+my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
+$node_qh or
+	cgi_fail(500, 'internal error', 'failed to look up server node');
+
+my ($node_id) = $node_qh->fetchrow_array();
+defined($node_id) or
+	cgi_fail(500, 'internal error', "node id for server $hostname not found");
+
+_logd("server $hostname node_id $node_id");
+
+my $q = new CGI();
+
+my $to_number = $q->path_info(); $to_number =~ s#^/##;
+
+$to_number or
+	cgi_fail(400, "no called number provided", "%s");
+
+$to_number =~ /^\+?\d+$/ or
+	cgi_fail(400, "invalid called number", "%s - $to_number");
+_logd("to = $to_number");
+
+my $from_number = $q->param('CallingNumber');
+_logd("from = $from_number");
+
+my $from_id = $q->param('CallingStationID');
+_logd("from_id = $from_id");
+
+my $page_count = $q->param('PageCount');
+_logd("pages = $page_count");
+
+my $fax_fh = $q->param('FaxImage');
+defined($fax_fh) or
+	cgi_fail(400, "no fax image provided", "%s");
+
+my $fax_file = $q->tmpFileName($fax_fh);
+_logd("fax file = $fax_file");
+
+if ($from_number =~ /^\d{10}$/) {
+	$from_number = '1' . $from_number;
+	_logd("updated from = $from_number");
+}
+
+if ($from_number =~ /^1\d{10}$/) {
+	$from_number = '+' . $from_number;
+	_logd("updated from = $from_number");
+}
+
+my $from_number_qh = query($dbh_config, 'select number from fax where number = ?', $from_number);
+$from_number_qh or
+	cgi_fail(500, 'internal error', 'failed to validate from_number');
+
+my $from_number_db = $from_number_qh->fetchrow_array();
+$from_number_db eq $from_number or
+	cgi_fail(403, 'invalid from number', "from $from_number not found");
+
+my $number_strip_plus = hynsphax_config('fb_number_strip_plus') // 1;
+_logd("number_strip_plus = $number_strip_plus");
+
+my $line_number = $from_number;
+if ($line_number =~ /^\+/ && $number_strip_plus) {
+	$line_number =~ s/^\+//;
+	_logd("stripping plus for line number search");
+}
+
+my $line_index;
+foreach my $line (@{$ata->{line_options}}) {
+	if ($line->{PhoneNumber} eq $line_number) {
+		$line_index = $line->{Index};
+		last;
+	}
+}
+
+defined($line_index) or
+	cgi_fail(403, 'unauthorized number', "from $from_number not associated with ata $ata->{mac}");
+_logd("line_index = $line_index");
+
+my $poll_outbound_status = $ata->{hyns_options}{poll_outbound_status};
+if ($poll_outbound_status !~ /^\d$/) {
+	$poll_outbound_status =~ s/^\(//; $poll_outbound_status =~ s/\)$//;
+
+	my @per_line_poll = split(/,/, $poll_outbound_status);
+
+	$poll_outbound_status = $per_line_poll[$line_index] // 1;
+	_logd("poll_outbound_status (line $line_index) = $poll_outbound_status");
+}
+else {
+	_logd("poll_outbound_status (ata) = $poll_outbound_status");
+}
+
+my $dbh_hy_queue = dbi_connect(hynsphax_config('db_hy_queue_list'));
+$dbh_hy_queue or
+	cgi_fail(500, 'internal error', 'failed to connect to hy queue db');
+
+my $dbh_fb_queue;
+my $db_fb_queue_list = hynsphax_config('db_fb_queue_list');
+if ($db_fb_queue_list) {
+	$dbh_fb_queue = dbi_connect($db_fb_queue_list);
+	$dbh_fb_queue or
+		cgi_fail(500, 'internal error', 'failed to connect to fb queue db');
+}
+else {
+	$dbh_fb_queue = $dbh_config;
+}
+
+my @sendfax_cmd = ('/usr/bin/sendfax', '-N', '-n', '-o', 'hylafax');
+push(@sendfax_cmd, '-S', $from_number);
+push(@sendfax_cmd, '-d', $to_number);
+push(@sendfax_cmd, $fax_file);
+
+_logd('running ' . join(' ', @sendfax_cmd));
+
+my ($status, $output) = read_pipe(@sendfax_cmd);
+
+my $job_id;
+
+if ($status < 0) {
+	cgi_fail(500, 'internal error', "sendfax failed to execute");
+}
+elsif ($status != 1) {
+	foreach (@{$output}) {
+		_log("\t$_");
+	}
+
+	cgi_fail(500, 'internal error', "sendfax failed");
+}
+else {
+	foreach (@{$output}) {
+		if (/^request id is (\d+)/) {
+			$job_id = $1;
+			_logd("job id $job_id");
+		}
+		else {
+			_log("warning: unexpected output from sendfax - $_");
+		}
+	}
+	defined($job_id) or
+		cgi_fail(500, 'internal error', "no sendfax job id found");
+}
+
+my $uuid_gen = Data::UUID->new();
+my $uuid = $uuid_gen->create();
+my $uuid_str = $uuid_gen->to_string($uuid);
+
+_logd("adding $job_id ($uuid_str) to outbound status queue");
+
+my $hy_queue_qh = query($dbh_hy_queue, 'insert into outbound (id, received_time, callback_url, ' .
+				       'last_state, last_status) values (?, ?, ?, ?, ?)',
+				       $job_id, time(), "faxback:$uuid_str", '?', 'submitted');
+
+$hy_queue_qh or
+	_log("error: failed to execute outbound hy queue query - $ata->{username} ($ata->{macl})" .
+	     "$from_number -> $to_number ($job_id/$uuid_str)");
+
+my $fb_queue_qh = query($dbh_fb_queue, q{
+				insert into fb_outbound_queue (fb_id, fb_username, fb_ata_mac, hy_node_id,
+							       hy_queue_id, from_number, to_number,
+							       hy_received_time, state)
+					               values (?, ?, ?, ?, ?, ?, ?, now(), 'InProgress')
+				}, $uuid_str, $ata->{username}, $ata->{mac}, $node_id, $job_id, $from_number,
+				   $to_number);
+
+if (!$fb_queue_qh) {
+	_log("error: failed to execute outbound fb queue query - $ata->{username} ($ata->{mac}) " .
+	     "$from_number -> $to_number ($job_id/$uuid_str)");
+	if ($poll_outbound_status) {
+		_log("warning: disabling poll_outbound_status for $job_id ($uuid_str)");
+		$poll_outbound_status = 0;
+	}
+}
+
+print "Content-type: text/xml\n\n";
+
+print '<?xml version="1.0" encoding="utf-8"?>' . "\n";
+print "<SendFax>\n";
+print "\t<Id>$uuid_str</Id>\n";
+if ($poll_outbound_status) {
+	print "\t<PollForStatus>true</PollForStatus>\n";
+}
+print "</SendFax>\n";
+
+exit(0);

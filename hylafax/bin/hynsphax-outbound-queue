@@ -1,14 +1,14 @@
 #! /usr/bin/perl
 #
 # Copyright 2019-2020 Paul B. Henson <henson@acm.org>
-# 
+#
 # hynsphax is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # Please see the LICENSE file for further details, or visit the URL
-# 
+#
 #         https://www.gnu.org/licenses/
 
 use strict;
@@ -57,7 +57,7 @@ my $error_map = {
 
 # Map phaxio error codes to error type and message
 my $phaxio_errors = {
-	3 => [ 'generalError', 'fax tranmission failed' ],
+	3 => [ 'generalError', 'fax transmission failed' ],
 	17 => [ 'lineError', 'Busy' ],
 	30 => [ 'lineError', 'No answer from the fax machine'],
 	36 => [ 'lineError', 'Telephony error' ],
@@ -85,13 +85,25 @@ if (!$dbh_config) {
 	exit(1);
 }
 
-my $dbh_queue = dbi_connect(hynsphax_config('db_queue_list'));
-if (!$dbh_queue) {
-	_log("error: failed to connect to config database");
+my $dbh_hy_queue = dbi_connect(hynsphax_config('db_hy_queue_list'));
+if (!$dbh_hy_queue) {
+	_log("error: failed to connect to hy queue db");
 	exit(1);
 }
 
-# look up our server node identifier
+my $dbh_fb_queue;
+my $db_fb_queue_list = hynsphax_config('db_fb_queue_list');
+if ($db_fb_queue_list) {
+	$dbh_fb_queue = dbi_connect($db_fb_queue_list);
+	if (!$dbh_fb_queue) {
+		_log("error: failed to connect to fb queue db");
+		exit(1);
+	}
+}
+else {
+	$dbh_fb_queue = $dbh_config;
+}
+
 my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
 if (!$node_qh) {
 	_log("error: failed to look up server node");
@@ -108,14 +120,14 @@ _logd("server $hostname node_id $node_id");
 my $retval;
 
 if (mkdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
-	_logd("processing outbound queue");
+	_logd("processing outbound hy queue");
 
 	$retval = process_queue();
 
 	if (!rmdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
 		_log("error: failed to remove queue lockfile - $!");
 		$retval = 1;
-	}	
+	}
 }
 else {
 	if ($! == 17) { # EEXIST
@@ -130,7 +142,7 @@ else {
 
 exit($retval);
 
-my (%hy_queue, $del_qh, $update_qh, $ua);
+my (%hy_queue, $hyq_del_qh, $hyq_update_qh, $fbq_update_qh, $ua);
 
 sub process_queue {
 
@@ -174,28 +186,36 @@ sub process_queue {
 
 	$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
 
-	($del_qh) = query($dbh_queue, 'delete from outbound where id = ?');
-	if (!$del_qh) {
+	($hyq_del_qh) = query($dbh_hy_queue, 'delete from outbound where id = ?');
+	if (!$hyq_del_qh) {
 		_log("error: failed to prepare delete query");
 		return 1;
 	}
 
-	($update_qh) = query($dbh_queue, 'update outbound set last_state = ?, ' .
+	($hyq_update_qh) = query($dbh_hy_queue, 'update outbound set last_state = ?, ' .
 					 'last_status = ? where id = ?');
-	if (!$update_qh) {
-		_log("error: failed to prepare update query");
+	if (!$hyq_update_qh) {
+		_log("error: failed to prepare hy update query");
 		return 1;
 	}
 
-	my $queue_qh = query($dbh_queue, 'select id, received_time, callback_url, last_state, ' .
+	($fbq_update_qh) = query($dbh_fb_queue, 'update fb_outbound_queue set retries = ?, status = ?, ' .
+					        'message = ?, pages = ?, hy_sent_time = from_unixtime(?), ' .
+						'state = ? where fb_id = ?');
+
+	if (!$fbq_update_qh) {
+		_log("error: failed to prepare fb update query");
+		return 1;
+	}
+
+	my $hyq_list_qh = query($dbh_hy_queue, 'select id, received_time, callback_url, last_state, ' .
 					 'last_status from outbound');
-	if (!$queue_qh) {
-		_log("error: failed to execute queue query");
+	if (!$hyq_list_qh) {
+		_log("error: failed to execute hy queue query");
 		return 1;
 	}
 
-
-	while (my @entry_row = $queue_qh->fetchrow_array()) {
+	while (my @entry_row = $hyq_list_qh->fetchrow_array()) {
 		process_entry(@entry_row);
 	}
 
@@ -205,7 +225,7 @@ sub process_queue {
 sub process_entry {
 	my ($id, $received_time, $callback_url, $last_state, $last_status) = @_;
 
-	_logd("queue entry $id, $received_time, $callback_url, $last_state, $last_status");
+	_logd("hy queue entry $id, $received_time, $callback_url, $last_state, $last_status");
 
 	if ($last_state =~ /^(D|F)$/) {
 		_logd("reviewing failed callback for completed job");
@@ -236,10 +256,21 @@ sub process_entry {
 
 			my @error_detail = $last_state eq 'F' ? error_map($id) : ();
 
-			if (phaxio_callback($callback_url, $last_state eq 'D' ? 'success' : 'failure',
-					    $id, $to, $pages, $received_time, $completed_time, $fax_tries,
-					    @error_detail)) {
-				_logd("callback succeeded,  deleting queue entry");
+			my $cb_status;
+			if ($callback_url =~ /^faxback:(.*)$/) {
+				$cb_status = fb_callback($1, $fax_tries, $pages, $completed_time,
+							 $last_state eq 'D' ? 'Success' : 'Failure',
+							 @error_detail);
+			}
+			else {
+				$cb_status = phaxio_callback($callback_url,
+							      $last_state eq 'D' ? 'success' : 'failure',
+							      $id, $to, $pages, $received_time, $completed_time,
+							      $fax_tries, @error_detail);
+			}
+
+			if ($cb_status) {
+				_logd("callback succeeded, deleting hy queue entry");
 				remove_entry($id);
 			}
 			else {
@@ -267,9 +298,22 @@ sub process_entry {
 
 			my @error_detail = $state eq 'F' ? error_map($id) : ();
 
-			if (phaxio_callback($callback_url, $state eq 'D' ? 'success' : 'failure', $id,
-					    $to, $pages, $received_time, $now, $tries, @error_detail)) {
-				_logd("callback succeeded,  deleting queue entry");
+			my $cb_status;
+			if ($callback_url =~ /^faxback:(.*)$/) {
+				$cb_status = fb_callback($1, $tries, $pages, $now,
+							 $state eq 'D' ? 'Success' : 'Failure',
+							 @error_detail);
+			}
+			else {
+				$cb_status = phaxio_callback($callback_url,
+							     $state eq 'D' ? 'success' : 'failure', $id,
+							     $to, $pages, $received_time, $now, $tries,
+							     @error_detail);
+			}
+
+			if ($cb_status) {
+
+				_logd("callback succeeded, deleting hy queue entry");
 				remove_entry($id);
 			}
 			else {
@@ -279,7 +323,7 @@ sub process_entry {
 
 				update_entry($state, $new_status, $id);
 			}
-		}		
+		}
 		else {
 			_logd("job still pending");
 			if ($last_state ne $state || $last_status ne $status) {
@@ -289,7 +333,7 @@ sub process_entry {
 		}
 	}
 	else {
-		_log("error: pending queue id $id not found on system, removing");
+		_log("error: pending hy queue id $id not found on system, removing");
 
 		remove_entry($id);
 	}
@@ -433,6 +477,36 @@ sub generate_pdf {
 	}
 }
 
+sub fb_callback {
+	my ($fb_id, $retries, $pages, $completed_time, $state, $error_type, $error_code, $error_id) = @_;
+
+	my @q_params = ($retries);
+	if ($state eq 'Failure') {
+		push(@q_params, ($error_id, $error_code));
+	}
+	else {
+		push(@q_params, (0, undef));
+	}
+	push(@q_params, ($pages, $completed_time, $state, $fb_id));
+
+	_logd(lc($state) . " faxback callback for $fb_id (" . join(',', @q_params) . ")");
+
+	my $status = query($dbh_fb_queue, $fbq_update_qh, @q_params);
+
+	if (!$status) {
+		_log("error: fb queue update query failed");
+		return 0;
+	}
+	elsif($status->rows() != 1) {
+		_log("warning: fb queue update query was no-op - $fb_id");
+	}
+	else {
+		_logd("callback successful");
+	}
+
+	return 1;
+}
+
 sub phaxio_callback {
 	my ($callback_url, $state, $id, $to, $pages, $request_time, $complete_time, $retries,
 	    $error_type, $error_code, $error_id) = @_;
@@ -450,7 +524,7 @@ sub phaxio_callback {
 
 	$fax_json .= '"completed_at":' . $complete_time . '}]}';
 
-	_logd("$state callback to $callback_url");
+	_logd("$state phaxio callback to $callback_url");
 	_logd("fax_json = $fax_json");
 
 	my $response;
@@ -467,7 +541,7 @@ sub phaxio_callback {
 	if ($@) {
 		_log("error: callback for id $id failed - $@");
 		return 0;
-	}	
+	}
 	elsif (!$response->is_success()) {
 		_log("error: callback for id $id failed - " . $response->status_line());
 		_logd("failure content - " . $response->content());
@@ -483,24 +557,24 @@ sub phaxio_callback {
 }
 
 sub update_entry {
-	my $status = query($dbh_queue, $update_qh, @_);
+	my $status = query($dbh_hy_queue, $hyq_update_qh, @_);
 
 	if (!$status) {
-		_log("error: queue update query failed");
+		_log("error: hy queue update query failed");
 	}
 	elsif($status->rows() != 1) {
-		_log("error: queue update query was no-op");
+		_log("warning: hy queue update query was no-op");
 	}
 }
 
 sub remove_entry {
-	my $status = query($dbh_queue, $del_qh, @_);
+	my $status = query($dbh_hy_queue, $hyq_del_qh, @_);
 
 	if (!$status) {
-		_log("error: queue delete query failed");
+		_log("error: hy queue delete query failed");
 	}
 	elsif($status->rows() != 1) {
-		_log("error: queue delete query was no-op");
+		_log("warning: hy queue delete query was no-op");
 	}
 }
 

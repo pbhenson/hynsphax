@@ -1,0 +1,82 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use CGI ();
+use Data::Dumper ();
+use DBI ();
+use Unix::Syslog ();
+use XML::Simple ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+require '/etc/hylafax/hynsphax-common-fb.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('fb-DeliverImageStatus', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
+$dbh_config or
+	cgi_fail(500, "internal error", "failed to connect to config db");
+
+my $dbh_fb_queue;
+my $db_fb_queue_list = hynsphax_config('db_fb_queue_list');
+if ($db_fb_queue_list) {
+	$dbh_fb_queue = dbi_connect($db_fb_queue_list);
+	if (!$dbh_fb_queue) {
+		_logp("error: failed to connect to fb queue database");
+		exit(1);
+	}
+}
+else {
+	$dbh_fb_queue = $dbh_config;
+}
+
+my $q = new CGI();
+
+my $q_id = $q->path_info(); $q_id =~ s#^/##;
+$q_id and _logd("path_info queue id = $q_id");
+
+my $xml = $q->param('POSTDATA');
+_logd("$xml", 2);
+
+my $xml_data;
+eval { $xml_data = XML::Simple::XMLin($xml); };
+
+!$@ or cgi_fail(400, "invalid xml", "%s - $@ ($xml)");
+
+$q_id eq $xml_data->{Id} or
+	_log("warning: path_info queue id $q_id ne xml id $xml_data->{Id}");
+
+my $fb_queue_qh = query($dbh_fb_queue, 'update fb_inbound_queue set retries = ?, status = ?, ' .
+				       'message = ?, fb_report_time = now(), delivered = ?, ' .
+				       'routing_history = ?  where fb_id = ?', $xml_data->{Retries},
+				       $xml_data->{Status}, $xml_data->{StatusMsg},
+				       $xml_data->{Delivered} eq 'true' ? 1 : 0, $xml_data->{RoutingHistory},
+				       $xml_data->{Id});
+
+if (!$fb_queue_qh) {
+	cgi_fail(500, "internal error", "failed to update $xml_data->{Id} - " . Data::Dumper::Dumper($xml_data));
+}
+elsif ($fb_queue_qh->rows() != 1) {
+	_log("warning: update $xml_data->{Id} was no-op - " . Data::Dumper::Dumper($xml_data));
+}
+
+print "Content-type: text/plain\n\n";
+
+exit(0);

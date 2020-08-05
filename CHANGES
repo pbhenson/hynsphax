@@ -1,3 +1,19 @@
+x.x   - Add support for the Faxback ATA Connector software and fax over https
+        ATAs
+
+	Added configuration options to control use of SSL for phaxio API
+	calls and the ssl option for the netsapiens fax destination to
+	override the global default; the default is to enable SSL, be sure
+	to verify SSL works properly in your environment if upgrading or
+	disable it
+
+        Renamed queue-sqlite.sql sample schema file to hy-queue-sqlite.sql to
+	distinguish it from the new fb-queue-mariadb.sql schema file
+
+	Split phaxio specific common code out to separate file making
+	existing common code file germane to both phaxio and faxback supportp
+
+
 0.6   - Fix typo causing queue processing failure if initial callback failed
         and needed to be retried
 
