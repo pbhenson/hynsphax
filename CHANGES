@@ -1,4 +1,4 @@
-x.x   - Add support for the Faxback ATA Connector software and fax over https
+0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs
 
 	Added configuration options to control use of SSL for phaxio API
