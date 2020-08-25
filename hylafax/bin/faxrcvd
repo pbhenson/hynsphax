@@ -37,6 +37,7 @@ Unix::Syslog::openlog('hynsphax-faxrcvd', Unix::Syslog::LOG_PID, $syslog_facilit
 umask(0027);
 
 my $hostname = Sys::Hostname::hostname();
+my $hostrole = hynsphax_config('role') // '';
 
 my $hf_dir = '/var/spool/hylafax';
 my $hf_conf = read_hf_config();
@@ -87,7 +88,7 @@ if (!defined($node_id)) {
 	_logp("error: node id for server $hostname not found");
 	exit(1);
 }
-_logd("server $hostname node_id $node_id");
+_logd("server $hostname node_id $node_id" . ($hostrole && " role $hostrole"));
 
 my $retval;
 
@@ -473,6 +474,22 @@ sub read_hf_config {
 
 sub process_dest {
 	my ($id, $received_time, $pages, $cid_from, $cid_to, $dest) = @_;
+
+	if ($dest =~ s/^\(([^\)]+)\)//) {
+		my $dest_role = $1;
+		my $role_match = $dest_role =~ s/^!// ? 'exclude' : 'require';
+
+		_logd("destination ${role_match}s role $dest_role");
+
+		if (($role_match eq 'require' && $dest_role ne $hostrole) ||
+		    ($role_match eq 'exclude' && $dest_role eq $hostrole)) {
+			_logd("skipping destination");
+			return 1;
+		}
+	}
+	else {
+		_logd("destination not role restricted");
+	}
 
 	my $status = 0;
 

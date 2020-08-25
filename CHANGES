@@ -1,3 +1,8 @@
+x.x   - Add concept of an optional role for servers; assigning a server a role
+	allows you to conditionally apply central configuration depending on
+	whether the server has a specific role, or does not have a specific
+	role
+
 0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs
 

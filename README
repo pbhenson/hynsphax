@@ -289,8 +289,16 @@ specific column definitions are:
 
 
 The destination column lists one or more groups of destinations, separated by
-commas, where each group consists of one or more destination, separated by the
-vertical bar/pipe symbol (|).
+semicolons ';', where each group consists of one or more destinations,
+separated by the vertical bar/pipe symbol '|'. Each destination group is
+optionally preceded by a required role or excluded role in parenthesis. A role
+for a given hynsphax server can be defined in hynsphax.conf; currently a
+server can have no or exactly one role. If there is role specified for a
+destination group, it is processed on all servers. If a role requirement is
+specified, for example '(thisrole)', that group is only processed on servers
+defined to have that role. If a role exclusion is specified, for example
+'(!thatrole)', only servers with no role defined or a role other than
+'thatrole' defined will process the group.
 
 There are currently three supported destinations. First is the "null"
 destination, which simply discards any incoming faxes.
@@ -344,7 +352,16 @@ complete. Otherwise, the group is stored in the outbound queue to get retried
 per the retry interval configuration in hynsphax.conf. An entry that tries to
 deliver a fax to one of two netsapiens servers might be:
 
-	netsapiens:host=ns01.mydomain.com,user=101,netsapiens:host=ns02.mydomain.com,user=101
+	netsapiens:host=ns01.mydomain.com,user=101|netsapiens:host=ns02.mydomain.com,user=101
+
+
+An entry which delivers a fax to netsapiens if processed on a server with role
+'ns' or to faxback if processed on a server with role 'fb' might be:
+
+	(ns)netsapiens:host=ns01.mydomain.com,user=101;(fb)faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
+
+Note that if a given server does not meet any of the role requirements, it
+not process the fax, effectively the same as specifying the null handler.
 
 
 The format for hy_job_opts (as well as the in/out variants) is:
