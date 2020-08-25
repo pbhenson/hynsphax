@@ -48,7 +48,7 @@ my $dest_handlers = {
 	# pass fax to a faxback ata connector instance
 	faxback => \&faxback_hander,
 	# dump on floor
-	null => sub { return 1; },
+	null => \&null_handler,
 };
 
 my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
@@ -502,6 +502,14 @@ sub process_dest {
 }
 
 my $ua;
+
+sub null_handler {
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
+
+	_logd("fax id $id from $cid_from to $cid_to, please meet round file");
+
+	return 1;
+}
 
 sub netsapiens_hander {
 	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
