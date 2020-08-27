@@ -3,6 +3,14 @@ x.x   - Add concept of an optional role for servers; assigning a server a role
 	whether the server has a specific role, or does not have a specific
 	role
 
+      - Added support for hostgroups in netsapiens and faxback destinations,
+        allowing directing a destination to a group of servers rather than
+	explicitly listing multiple servers. For upgrades, the new table
+	fb_servers will need to be created and the existing tables ns_servers
+	and fb_servers will need to be updated.	See sql/config-mariadb.sql for
+	details
+
+
 0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs
 

@@ -518,8 +518,6 @@ sub process_dest {
 	return $status;
 }
 
-my $ua;
-
 sub null_handler {
 	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
 
@@ -527,6 +525,11 @@ sub null_handler {
 
 	return 1;
 }
+
+my $ua;
+
+my $ns_hgroup_query;
+my $ns_hgroups;
 
 sub netsapiens_hander {
 	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
@@ -545,21 +548,53 @@ sub netsapiens_hander {
 		}
 	}
 
+	my @hosts;
+	if ($options->{host} =~ /^@(.*)/) {
+		my $hgroup = $1;
+		_logd("expanding ns host group $hgroup");
+
+		if (exists($ns_hgroups->{$hgroup})) {
+			_logd("using cached members " . join(',', @{$ns_hgroups->{$hgroup}}));
+			@hosts = @{$ns_hgroups->{$hgroup}};
+		}
+		else {
+			if (!ref($ns_hgroup_query)) {
+				($ns_hgroup_query) = query($dbh_config,
+							   'select hostname from ns_servers where hgroup = ?');
+				if (!$ns_hgroup_query) {
+					_logp("error: failed to prepare ns_hgroup_query query");
+					return 0;
+				}
+			}
+
+			my $host_q = query($dbh_config, $ns_hgroup_query, $hgroup);
+			if (!$host_q) {
+				_logp("error: failed to execute ns_hgroup_query query on $hgroup");
+				return 0;
+			}
+
+			while (my $host = $host_q->fetchrow_array()) {
+				_logd("found $host");
+				push(@hosts, $host);
+			}
+
+			if (@hosts == 0) {
+				_logp("error: ns hgroup $hgroup contains no members");
+				return 0;
+			}
+
+			$ns_hgroups->{$hgroup} = [ @hosts ];
+		}
+	}
+	else {
+		push(@hosts, $options->{host});
+	}
+
 	if (!ref($ua)) {
 		$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
 	}
 
 	my $phaxio_ssl = $options->{ssl} // hynsphax_config('phaxio_ssl') // 1;
-
-	my $url = $phaxio_ssl ? 'https://' : 'http://';
-	$url .= $options->{host};
-	if (exists($options->{port})) {
-		$url .= ':' . $options->{port};
-	}
-	$url .= '/ns-api/?object=phaxio&action=create&domain=';
-	$url .= uri_escape($options->{domain}) . '&uid=';
-	$url .= uri_escape($options->{user}) . '@' . uri_escape($options->{domain});
-	_logd("url = $url");
 
 	my $ns_id = "${node_id}0${id}";
 
@@ -573,39 +608,59 @@ sub netsapiens_hander {
 			       json_escape($cid_to));
 	_logd("fax json = $fax_json");
 
-	my $response;
-	eval {
-		$response = $ua->post($url, Content_Type => 'form-data',
-				       Content => [
-							fax => $fax_json,
-							direction => 'received',
-							is_test => 'false',
-							success => 'true',
-							filename => [ "$hf_dir/recvq-pdf/fax${id}.pdf" ],
-						  ]);
-	};
+	my $status = 0;
+	foreach my $host (@hosts) {
+		_logd("trying host $host");
 
-	if ($@) {
-		_log("error: phaxio notify post to $options->{host} failed - $@");
-		return 0;
+		my $url = $phaxio_ssl ? 'https://' : 'http://';
+		$url .= $host;
+		if (exists($options->{port})) {
+			$url .= ':' . $options->{port};
+		}
+		$url .= '/ns-api/?object=phaxio&action=create&domain=';
+		$url .= uri_escape($options->{domain}) . '&uid=';
+		$url .= uri_escape($options->{user}) . '@' . uri_escape($options->{domain});
+		_logd("url = $url");
+
+		my $response;
+		eval {
+			$response = $ua->post($url, Content_Type => 'form-data',
+						       Content => [
+								fax => $fax_json,
+								direction => 'received',
+								is_test => 'false',
+								success => 'true',
+								filename => [ "$hf_dir/recvq-pdf/fax${id}.pdf" ],
+							  ]);
+		};
+
+		if ($@) {
+			_log("error: phaxio notify post to $host failed - $@");
+			next;
+		}
+
+		if (!$response->is_success()) {
+			_log("error: phaxio notify to $host failed - " . $response->status_line());
+			_logd("failure content - " . $response->content());
+			next;
+		}
+		else {
+			if ($response->code() != 202) {
+				_logd("warning: phaxio notify status " . $response->code() . " != 202");
+			}
+			_logd("phaxio notify successful");
+			$status = 1;
+			last;
+		}
 	}
 
-	if (!$response->is_success()) {
-		_log("error: phaxio notify to $options->{host} failed - " . $response->status_line());
-		_logd("failure content - " . $response->content());
-		return 0;
-	}
-	elsif ($response->code() != 202) {
-		_logd("warning: phaxio notify status " . $response->code() . " != 202");
-	}
-	else {
-		_logd("phaxio notify successful");
-	}
-
-	return 1;
+	return $status;
 }
 
+my $fb_hgroup_query;
+my $fb_hgroups;
 my $fb_queue_qh;
+
 sub faxback_hander {
 	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
 
@@ -625,6 +680,48 @@ sub faxback_hander {
 
 	_logd("from $cid_from to $cid_to @ $options->{ata} via $options->{host}");
 	_logd("hosting guid $options->{guid}") if exists($options->{guid});
+
+	my @hosts;
+	if ($options->{host} =~ /^@(.*)/) {
+		my $hgroup = $1;
+		_logd("expanding fb host group $hgroup");
+
+		if (exists($fb_hgroups->{$hgroup})) {
+			_logd("using cached members " . join(',', @{$fb_hgroups->{$hgroup}}));
+			@hosts = @{$fb_hgroups->{$hgroup}};
+		}
+		else {
+			if (!ref($fb_hgroup_query)) {
+				($fb_hgroup_query) = query($dbh_config,
+							   'select hostname from fb_servers where hgroup = ?');
+				if (!$fb_hgroup_query) {
+					_logp("error: failed to prepare fb_hgroup_query query");
+					return 0;
+				}
+			}
+
+			my $host_q = query($dbh_config, $fb_hgroup_query, $hgroup);
+			if (!$host_q) {
+				_logp("error: failed to execute fb_hgroup_query query on $hgroup");
+				return 0;
+			}
+
+			while (my $host = $host_q->fetchrow_array()) {
+				_logd("found $host");
+				push(@hosts, $host);
+			}
+
+			if (@hosts == 0) {
+				_logp("error: fb hgroup $hgroup contains no members");
+				return 0;
+			}
+
+			$fb_hgroups->{$hgroup} = [ @hosts ];
+		}
+	}
+	else {
+		push(@hosts, $options->{host});
+	}
 
 	my $ata_number;
 	if ($options->{ata} =~ /@/) {
@@ -687,15 +784,6 @@ sub faxback_hander {
 
 	my $fb_ssl = $options->{ssl} // hynsphax_config('fb_ssl') // 1;
 
-	my $url = $fb_ssl ? 'https://' : 'http://';
-	$url .= $options->{host};
-	if (exists($options->{port})) {
-		$url .= ':' . $options->{port};
-	}
-	$url .= '/nsps/nsps.aspx?target=atamime';
-	_logd("url = $url");
-
-	my $response;
 	my $post_content = [
 		ServiceName => 'ConnectorService',
 		Function => 'DeliverImage',
@@ -711,55 +799,74 @@ sub faxback_hander {
 		push(@{$post_content}, ProviderGuid => $options->{guid});
 	}
 
-	eval {
-		$response = $ua->post($url, Content_Type => 'form-data', Content => $post_content);
-	};
+	my $status = 0;
+	foreach my $host (@hosts) {
+		_logd("trying host $host");
 
-	if ($@) {
-		_log("error: faxback post to $options->{host} failed - $@");
-		return 0;
-	}
+		my $url = $fb_ssl ? 'https://' : 'http://';
+		$url .= $host;
+		if (exists($options->{port})) {
+			$url .= ':' . $options->{port};
+		}
+		$url .= '/nsps/nsps.aspx?target=atamime';
+		_logd("url = $url");
 
-	if (!$response->is_success()) {
-		_log("error: faxback post to $options->{host} failed - " . $response->status_line());
-		_logd("failure content - " . $response->content());
-		return 0;
-	}
-	elsif ($response->code() != 202) {
-		_logd("warning: faxback post status " . $response->code() . " != 202");
-	}
-	else {
-		_logd("faxback post successful");
-	}
+		my $response;
+		eval {
+			$response = $ua->post($url, Content_Type => 'form-data', Content => $post_content);
+		};
 
-	my $fb_id = $response->content();
-	chomp($fb_id);
+		if ($@) {
+			_log("error: faxback post to $host failed - $@");
+			next;
+		}
 
-	if (length($fb_id) == 0) {
-		_log("error: faxback post to $options->{host} missing returned fb_id");
-		return 0;
-	}
+		if (!$response->is_success()) {
+			_log("error: faxback post to $host failed - " . $response->status_line());
+			_logd("failure content - " . $response->content());
+			next;
+		}
+		else {
+			if ($response->code() != 202) {
+				_logd("warning: faxback post status " . $response->code() . " != 202");
+			}
 
-	$fb_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ or
-		_log("warning: unexpected fb_id format $fb_id");
+			_logd("faxback post successful");
+			$status = 1;
 
-	if (!ref($fb_queue_qh)) {
-		($fb_queue_qh) = query($dbh_fb_queue, q{ insert into fb_inbound_queue (fb_id, fb_username,
-							 fb_ata_mac, hy_node_id, hy_queue_id, from_number,
-							 to_number, pages, hy_received_time, hy_sent_time)
-							 values (?, ?, ?, ?, ?, ?, ?, ?, from_unixtime(?),
-							 now()) });
-		if (!$fb_queue_qh) {
-			_log("error: failed to prepare fb outbound queue insert query for $fb_id");
-			return 1;
+			my $fb_id = $response->content();
+			chomp($fb_id);
+
+			if (length($fb_id) == 0) {
+				_log("warning: faxback post to $host missing returned fb_id");
+				last;
+			}
+
+			$fb_id =~ /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/ or
+				_log("warning: unexpected fb_id format $fb_id");
+
+			if (!ref($fb_queue_qh)) {
+				($fb_queue_qh) = query($dbh_fb_queue,
+							q{ insert into fb_inbound_queue (fb_id, fb_username,
+							   fb_ata_mac, hy_node_id, hy_queue_id, from_number,
+							   to_number, pages, hy_received_time, hy_sent_time)
+							   values (?, ?, ?, ?, ?, ?, ?, ?, from_unixtime(?),
+							   now()) });
+				if (!$fb_queue_qh) {
+					_log("error: failed to prepare fb outbound queue insert query for $fb_id");
+					last;
+				}
+			}
+
+			my $q_status = query($dbh_fb_queue, $fb_queue_qh, $fb_id, $ata->{username}, $ata->{mac},
+					     $node_id, $id, $cid_from, $cid_to, $pages, $received_time);
+
+			$q_status or
+				_log("error: failed to insert $fb_id into fb outbound queue");
+
+			last;
 		}
 	}
 
-	my $q_status = query($dbh_fb_queue, $fb_queue_qh, $fb_id, $ata->{username}, $ata->{mac},
-			     $node_id, $id, $cid_from, $cid_to, $pages, $received_time);
-
-	$q_status or
-		_log("error: failed to insert $fb_id into fb outbound queue");
-
-	return 1;
+	return $status;
 }

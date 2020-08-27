@@ -102,6 +102,16 @@ entry in this table; for example:
 	insert into hy_servers (hostname, node_id)
 			values (‘hyfax2.my.domain’, ‘02’);
 
+The hy_servers table also allows you to group hosts into groups to use when
+specifying destinations, this is configured by the hgroup column. If the two
+above servers were both members of the 'testbed' host group, the insert might
+be:
+
+	insert into hy_servers (hostname, hgroup, node_id)
+			values (‘hyfax1.my.domain’, 'testbed', ‘01’);
+	insert into hy_servers (hostname, hgroup, node_id)
+			values (‘hyfax2.my.domain’, 'testbed', ‘02’);
+
 
 Another table named ns_servers contains a mapping from netsapiens server host
 names to the order they should use when attempting to contact the HylaFAX
@@ -116,6 +126,25 @@ you might create the entries:
 			values (‘ns1.my.domain’, ’01,02’);
 	insert into ns_servers (hostname, hy_node_order)
 			values (‘ns2.my.domain’, ’02,01’);
+
+The ns_servers table also allows you to group hosts into groups to use when
+specifying destinations, this is configured by the hgroup column. If the two
+above servers were both members of the 'prod' host group, the insert might be:
+
+	insert into ns_servers (hostname, hgroup, hy_node_order)
+			values (‘ns1.my.domain’, 'prod', ’01,02’);
+	insert into ns_servers (hostname, hgroup, hy_node_order)
+			values (‘ns2.my.domain’, 'prod', ’02,01’);
+
+A third table defines the faxback ATA connector servers available and is
+currently only needed if hostgroups will be used for the faxback destination.
+If two servers existed as members of the 'eastfax' hostgroup, an example
+insert would be:
+
+	insert into fb_servers (hostname, hgroup)
+			values (‘fb1.my.domain’, 'eastfax');
+	insert into fb_servers (hostname, hgroup)
+			values (‘fb2.my.domain’, 'eastfax');
 
 
 A table named fb_atas contains configuration details for any FaxBack ATAs
@@ -306,15 +335,23 @@ destination, which simply discards any incoming faxes.
 Second is the "netsapiens" destination, which routes a fax to a netsapiens
 server. The format for a netsapiens destination is:
 
-	netsapiens:host=<hostname>,user=<user>[,ssl=<0|1>]
+	netsapiens:host=<hostname|@hostgroup>,domain=<domain>,user=<user>[,ssl=<0|1>]
 
-where host is the netsapiens server name, user is the netsapiens user on that
-server, and ssl optionally overrides the system default configuration for
-whether or not to use ssl when processing phaxio API calls to netsapiens.
+where host is either the netsapiens server name or an @ followed by the name of
+a hostgroup, domain is a valid domain on that server, user is a valid user in
+that domain, and ssl optionally overrides the system default configuration for
+whether or not to use ssl when processing phaxio API calls to netsapiens. If a
+hostgroup is supplied rather than a single host, the entry will be expanded to
+try all hosts in the hostgroup and considered successful if any host in the
+group succeeds.
 
 For example:
 
-	netsapiens:host=ns01.mydomain.com,user=101
+	netsapiens:host=ns01.mydomain.com,domain=test.service,user=101
+
+or:
+
+	netsapiens:host=@testbed,domain=test.service,user=101,ssl=0
 
 
 Third is the "faxback" destination, which routes a fax to a faxback ATA
@@ -322,13 +359,16 @@ through the FaxBack ATA Connector software. The format for a faxback is:
 
 	faxback:host=<hostname>,ata=<ataspec>,number=<number>[,guid=<guid>][,ssl=<0|1>],[port=<port>]
 
-where hostname is the name of a system running the ATA Connector software,
-number is a phone number defined in the fax table to deliver to, ssl
-optionally overrides the system default configuration for whether or not to
-use ssl when processing API calls to the facback ATA Connector, and the
-optional port defines which port to connect to if not the standard 80/443.
-The optional guid parameter is only required if using a hosted version of the
-ATA Connector software, and the ATA specification is:
+where host is either the name of a system running the ATA Connector software or
+an @ followed by the name of a hostgroup, number is a phone number defined in
+the fax table to deliver to, ssl optionally overrides the system default
+configuration for whether or not to use ssl when processing API calls to the
+facback ATA Connector, and the optional port defines which port to connect to
+if not the standard 80/443. If a hostgroup is supplied rather than a single
+host, the entry will be expanded  try all hosts in the hostgroup and considered
+successful if any host in the group succeeds. The optional guid parameter is
+only required if using a hosted version of the ATA Connector software, and the
+ATA specification is:
 
 	[<ata_number>@][<searchkey>:]<id>
 
@@ -343,7 +383,7 @@ For example:
 	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212,ssl=0
 	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
 	faxback:host=myfb.mydomain.com,ata=mac:ABCD12340044,number=+19095551212
-	faxback:host=myfb.mydomain.com,ata=6265551212@ata-501,number=+19095551212
+	faxback:host=@prod,ata=6265551212@ata-501,number=+19095551212
 
 
 Destination groups are processed in order, as is each option in a destination
@@ -352,7 +392,11 @@ complete. Otherwise, the group is stored in the outbound queue to get retried
 per the retry interval configuration in hynsphax.conf. An entry that tries to
 deliver a fax to one of two netsapiens servers might be:
 
-	netsapiens:host=ns01.mydomain.com,user=101|netsapiens:host=ns02.mydomain.com,user=101
+	netsapiens:host=ns01.mydomain.com,domain=test.service,user=101|netsapiens:host=ns02.mydomain.com,domain=test.service,user=101
+
+or, assuming that both servers are part of the hostgroup mygroup:
+
+	netsapiens:host=@mygroup,domain=test.service,user=101
 
 
 An entry which delivers a fax to netsapiens if processed on a server with role
@@ -361,7 +405,7 @@ An entry which delivers a fax to netsapiens if processed on a server with role
 	(ns)netsapiens:host=ns01.mydomain.com,user=101;(fb)faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
 
 Note that if a given server does not meet any of the role requirements, it
-not process the fax, effectively the same as specifying the null handler.
+will not process the fax, effectively the same as specifying the null handler.
 
 
 The format for hy_job_opts (as well as the in/out variants) is:

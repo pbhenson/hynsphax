@@ -11,14 +11,35 @@ create table fax(
 	hy_job_opts_out text(8192)
 );
 
+-- added group column/index as of version x.x
+-- for upgrade, run:
+--
+--   ALTER TABLE hy_servers ADD COLUMN hgroup varchar(32) AFTER hostname;
+--   ALTER TABLE hy_servers ADD INDEX hs_hgrp (hgroup);
 create table hy_servers(
 	hostname varchar(255) not null primary key,
-	node_id varchar(2) not null unique key
+	hgroup varchar(32),
+	node_id varchar(2) not null unique key,
+	index hs_hgrp (hgroup)
 );
 
+-- added group column/index as of version x.x
+-- for upgrade, run:
+--
+--   ALTER TABLE ns_servers ADD COLUMN hgroup varchar(32) AFTER hostname;
+--   ALTER TABLE ns_servers ADD INDEX hs_hgrp (hgroup);
 create table ns_servers(
 	hostname varchar(255) not null primary key,
-	hy_node_order varchar(1024) not null
+	hgroup varchar(32),
+	hy_node_order varchar(1024) not null,
+	index ns_hgrp (hgroup)
+);
+
+-- new table as of version x.x
+create table fb_servers(
+	hostname varchar(255) not null primary key,
+	hgroup varchar(32),
+	index fs_hgrp (hgroup)
 );
 
 create table fb_atas(
