@@ -10,6 +10,11 @@ x.x   - Add concept of an optional role for servers; assigning a server a role
 	and fb_servers will need to be updated.	See sql/config-mariadb.sql for
 	details
 
+      - Add + to caller id from value in faxrcvd when number is 1 followed by
+        10 digits. Add new hylafax server config variable ns_number_strip_plus
+	defaulting to on to remove that + before passing the caller id to
+	netsapiens in a phaxio notify
+
 
 0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs

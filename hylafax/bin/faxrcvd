@@ -149,6 +149,11 @@ sub process_fax {
 		return 1;
 	}
 
+	if ($cid_from =~ /^1\d{10}$/) {
+		_logd("adding plus to cid_from $cid_from");
+		$cid_from =~ s/^/+/;
+	}
+
 	_logd("reading faxinfo from $file");
 	my $faxinfo;
 	my ($status, $output) = read_pipe($hf_conf->{INFO}, '-n', $file);
@@ -546,6 +551,12 @@ sub netsapiens_hander {
 			_log("error: phaxio notify missing required $_ option");
 			return 0;
 		}
+	}
+
+	my $ns_number_strip_plus = hynsphax_config('ns_number_strip_plus') // 1;
+	if ($cid_from =~ /^\+/ && $ns_number_strip_plus) {
+		_logd("stripping + from $cid_from");
+		$cid_from =~ s/^\+//;
 	}
 
 	my @hosts;
