@@ -280,7 +280,6 @@ sub process_fax {
 		}
 	}
 
-
 	_logd("querying destinations for $cid_to");
 	my ($fax_qh) = query($dbh_config, 'select destinations from fax where number = ?');
 	if (!$fax_qh) {
@@ -296,17 +295,32 @@ sub process_fax {
 
 	my ($dest_list) = $fax_qh->fetchrow_array();
 	if (!$dest_list) {
-		_log("warning: destination for $cid_to not found, checking for default");
+		_logd("no destinations found for $cid_to, checking source routing on $cid_from");
+		my $sr_qh = query($dbh_config,
+				    'select source_route from fax where number = ?', $cid_from);
+
+		if (!$sr_qh) {
+			_logp("error: failed to look up source route for $cid_from");
+			return 1;
+		}
+
+		($dest_list) = $sr_qh->fetchrow_array();
+	}
+	if (!$dest_list) {
+		_log("warning: no destination for $cid_to or source route for $cid_from found");
 		$status = query($dbh_config, $fax_qh, 'default');
 		if (!$status) {
 			_logp("error: failed to lookup default destination");
 			return 1;
 		}
+
 		($dest_list) = $fax_qh->fetchrow_array();
 		if (!$dest_list) {
-			_logp("error: no destinations for $cid_to found");
+			_logp("error: no default destination for $cid_to found");
 			return 1;
 		}
+
+		_logp("using default destination");
 	}
 	_logd("found destinations $dest_list");
 

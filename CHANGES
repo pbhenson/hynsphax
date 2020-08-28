@@ -15,6 +15,12 @@ x.x   - Add concept of an optional role for servers; assigning a server a role
 	defaulting to on to remove that + before passing the caller id to
 	netsapiens in a phaxio notify
 
+      - Added new source route option for inbound faxes. If a fax is received
+        for a number that is not known to the system, the destinations can be
+	defined based on the number the fax originated from. For upgrades, the
+	table fax will need to be updated. See sql/config-mariadb.sql for
+	details
+
 
 0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs

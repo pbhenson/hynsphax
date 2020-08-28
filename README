@@ -304,6 +304,12 @@ specific column definitions are:
 - destinations (required): How to handle an incoming fax to the number,
                            further detailed below.
 
+- source_route (optional): If a fax is received from the number to a number
+                           that is not known to the system, the destinations
+			   for that fax can be defined based on the sending
+			   number; the format for this column is the same as
+			   the destinations column
+
 - provision_date (optional): The date the number was created.
 
 - hy_job_opts (optional): The HylaFAX options applied to both incoming and

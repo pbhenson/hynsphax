@@ -1,3 +1,7 @@
+-- added source_route column as of version x.x
+-- for upgrade, run:
+--
+--   ALTER TABLE fax ADD COLUMN source_route varchar(4096) AFTER destinations;
 create table fax(
 	number varchar(128) not null primary key,
 	name varchar(1024),
@@ -5,6 +9,7 @@ create table fax(
 	state varchar(1024),
 	cost int,
 	destinations varchar(4096) not null,
+	source_route varchar(4096),
 	provision_date bigint unsigned,
 	hy_job_opts text(8192),
 	hy_job_opts_in text(8192),
