@@ -262,6 +262,11 @@ sub process_entry {
 							 $last_state eq 'D' ? 'Success' : 'Failure',
 							 @error_detail);
 			}
+			elsif ($callback_url =~ /^proxy:(.*)$/) {
+				$cb_status = proxy_callback($id, $fax_tries, $pages, $completed_time,
+							 $last_state eq 'D' ? 'Success' : 'Failure',
+							 @error_detail);
+			}
 			else {
 				$cb_status = phaxio_callback($callback_url,
 							      $last_state eq 'D' ? 'success' : 'failure',
@@ -301,6 +306,11 @@ sub process_entry {
 			my $cb_status;
 			if ($callback_url =~ /^faxback:(.*)$/) {
 				$cb_status = fb_callback($1, $tries, $pages, $now,
+							 $state eq 'D' ? 'Success' : 'Failure',
+							 @error_detail);
+			}
+			elsif ($callback_url =~ /^proxy:(.*)$/) {
+				$cb_status = proxy_callback($id, $tries, $pages, $now,
 							 $state eq 'D' ? 'Success' : 'Failure',
 							 @error_detail);
 			}
@@ -503,6 +513,14 @@ sub fb_callback {
 	else {
 		_logd("callback successful");
 	}
+
+	return 1;
+}
+
+sub proxy_callback {
+	my ($id, $retries, $pages, $completed_time, $state, $error_type, $error_code, $error_id) = @_;
+
+	_log("proxy of $id completed $completed_time state $state status ($error_type, $error_code, $error_id)");
 
 	return 1;
 }

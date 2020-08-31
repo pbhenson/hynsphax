@@ -335,7 +335,7 @@ defined to have that role. If a role exclusion is specified, for example
 '(!thatrole)', only servers with no role defined or a role other than
 'thatrole' defined will process the group.
 
-There are currently three supported destinations. First is the "null"
+There are currently four supported destinations. First is the "null"
 destination, which simply discards any incoming faxes.
 
 Second is the "netsapiens" destination, which routes a fax to a netsapiens
@@ -390,6 +390,29 @@ For example:
 	faxback:host=myfb.mydomain.com,ata=ata-501,number=+19095551212
 	faxback:host=myfb.mydomain.com,ata=mac:ABCD12340044,number=+19095551212
 	faxback:host=@prod,ata=6265551212@ata-501,number=+19095551212
+
+
+Last is the "proxy" destination, which routes a fax through a different
+hynsphax server for delivery. The format for a proxy destination is:
+
+	proxy:host=<hostname|@hostgroup>[,port=<port>][,from=<number>][,to=<number>][,ssl=<0|1>]
+
+where host is either a hynsphax server name or an @ followed by the name of a
+hostgroup, port is an optional port number if not the standard http/https
+ports, from optionally overrides the from number for the fax, to optionally
+overrides the to number for the fax, and ssl optionally overrides the system
+default configuration for whether or not to use ssl when processing proxy calls
+to hynsphax servers. If a hostgroup is supplied rather than a single host, the
+entry will be expanded to try all hosts in the hostgroup and considered
+successful if any host in the group succeeds.
+
+For example:
+
+	proxy:host=hyns1.mydomain.com
+
+or:
+
+	proxy:host=@testbed,to=+16265551212,ssl=0
 
 
 Destination groups are processed in order, as is each option in a destination

@@ -120,6 +120,10 @@ components:
 	chown hylafax:apache /etc/hylafax/hynsphax.conf
 	chmod 640 /etc/hylafax/hynsphax.conf
 
+	# New file for upgrades as of version x.x
+	\cp hylafax/cgi/hynsphax-proxy /var/www/cgi-bin/hynsphax-proxy
+	chown root:apache /var/www/cgi-bin/hynsphax-proxy
+	chmod 550 /var/www/cgi-bin/hynsphax-proxy
 
 The following commands install the phaxio API compatibility components:
 

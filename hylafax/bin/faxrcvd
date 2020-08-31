@@ -50,6 +50,8 @@ my $dest_handlers = {
 	faxback => \&faxback_hander,
 	# dump on floor
 	null => \&null_handler,
+	# forward to another hynsphax server
+	proxy => \&proxy_handler,
 };
 
 my $dbh_config = dbi_connect(hynsphax_config('db_config_list'));
@@ -890,6 +892,147 @@ sub faxback_hander {
 				_log("error: failed to insert $fb_id into fb outbound queue");
 
 			last;
+		}
+	}
+
+	return $status;
+}
+
+my $hy_hgroup_query;
+my $hy_hgroups;
+
+sub proxy_handler {
+	my ($id, $received_time, $pages, $cid_from, $cid_to, $handler_options) = @_;
+
+	my $proxy_id = hynsphax_config('proxy_id');
+	my $proxy_secret = hynsphax_config('proxy_secret');
+
+	if (!defined($proxy_id) || $proxy_id eq '') {
+		_log("error: proxy id not valid");
+		return 0;
+	}
+
+	if (!defined($proxy_secret) || $proxy_secret eq '') {
+		_log("error: proxy secret not valid");
+		return 0;
+	}
+
+	my $options;
+	foreach my $h_opt (split(/,/, $handler_options)) {
+		my ($opt, $value) = split(/=/, $h_opt);
+
+		_logd("proxy_hander: $opt = $value");
+		$options->{$opt} = $value;
+	}
+	foreach (qw(host)) {
+		if (!exists($options->{$_})) {
+			_log("error: proxy missing required $_ option");
+			return 0;
+		}
+	}
+
+	_logd("from $cid_from to $cid_to via $options->{host}");
+	if (exists($options->{from})) {
+		_logd("overriding from - $options->{from}");
+		$cid_from = $options->{from};
+	}
+	if (exists($options->{to})) {
+		_logd("overriding to - $options->{to}");
+		$cid_to = $options->{to};
+	}
+
+	my @hosts;
+	if ($options->{host} =~ /^@(.*)/) {
+		my $hgroup = $1;
+		_logd("expanding hy host group $hgroup");
+
+		if (exists($hy_hgroups->{$hgroup})) {
+			_logd("using cached members " . join(',', @{$hy_hgroups->{$hgroup}}));
+			@hosts = @{$hy_hgroups->{$hgroup}};
+		}
+		else {
+			if (!ref($hy_hgroup_query)) {
+				($hy_hgroup_query) = query($dbh_config,
+							   'select hostname from hy_servers where hgroup = ?');
+				if (!$hy_hgroup_query) {
+					_logp("error: failed to prepare hy_hgroup_query query");
+					return 0;
+				}
+			}
+
+			my $host_q = query($dbh_config, $hy_hgroup_query, $hgroup);
+			if (!$host_q) {
+				_logp("error: failed to execute hy_hgroup_query query on $hgroup");
+				return 0;
+			}
+
+			while (my $host = $host_q->fetchrow_array()) {
+				_logd("found $host");
+				push(@hosts, $host);
+			}
+
+			if (@hosts == 0) {
+				_logp("error: hy hgroup $hgroup contains no members");
+				return 0;
+			}
+
+			$hy_hgroups->{$hgroup} = [ @hosts ];
+		}
+	}
+	else {
+		push(@hosts, $options->{host});
+	}
+
+	if (!ref($ua)) {
+		$ua = LWP::UserAgent->new(timeout => 30, keep_alive => 1);
+	}
+
+	my $hy_ssl = $options->{ssl} // hynsphax_config('hy_ssl') // 1;
+
+	my $post_content = [
+		proxy_id => $proxy_id,
+		proxy_secret => $proxy_secret,
+		from => $cid_from,
+		to => $cid_to,
+		file => [ "$hf_dir/recvq/fax${id}.tif" ],
+		];
+
+	my $status = 0;
+	foreach my $host (@hosts) {
+		_logd("trying host $host");
+
+		my $url = $hy_ssl ? 'https://' : 'http://';
+		$url .= $host;
+		if (exists($options->{port})) {
+			$url .= ':' . $options->{port};
+		}
+		$url .= '/cgi-bin/hynsphax-proxy';
+		_logd("url = $url");
+
+		my $response;
+		eval {
+			$response = $ua->post($url, Content_Type => 'form-data', Content => $post_content);
+		};
+
+		if ($@) {
+			_log("error: proxy post to $host failed - $@");
+			next;
+		}
+
+		$response->is_success() or
+			_log("warning: bad status code on proxy post to $host - " . $response->status_line());
+
+		my $content = $response->content(); chomp($content);
+		if ($content =~ /^OK/) {
+			_logd("proxy post successful");
+			$status = 1;
+			last;
+		}
+		elsif ($content =~ /^ERROR: (.*)/) {
+			_logd("error: proxy post to $host failed - $!");
+		}
+		else {
+			_logd("error: proxy post to $host unexpected return - $content");
 		}
 	}
 

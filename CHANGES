@@ -21,6 +21,11 @@ x.x   - Add concept of an optional role for servers; assigning a server a role
 	table fax will need to be updated. See sql/config-mariadb.sql for
 	details
 
+      - Add new destination "proxy" to forward a fax through a different
+        hynsphax server; for updates the file distribution file
+	hylafax/cgi/hynsphax-proxy needs to be installed, see INSTALL for
+	details
+
 
 0.7   - Add support for the Faxback ATA Connector software and fax over https
         ATAs

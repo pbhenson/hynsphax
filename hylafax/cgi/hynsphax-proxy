@@ -1,0 +1,138 @@
+#! /usr/bin/perl
+#
+# Copyright 2020 Paul B. Henson <henson@acm.org>
+#
+# hynsphax is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Please see the LICENSE file for further details, or visit the URL
+#
+#         https://www.gnu.org/licenses/
+
+use strict;
+use warnings;
+
+use DBI ();
+use CGI ();
+use File::LibMagic ();
+use Unix::Syslog ();
+
+require '/etc/hylafax/hynsphax.conf';
+require '/etc/hylafax/hynsphax-common.pl';
+
+my $debug = hynsphax_config('debug') // 0;
+_log_debug($debug);
+
+my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DAEMON;
+Unix::Syslog::openlog('hynsphax-proxy', Unix::Syslog::LOG_PID, $syslog_facility);
+
+my $proxy_service_enabled = hynsphax_config('proxy_service_enabled') // 1;
+
+$proxy_service_enabled or
+	_fail(403, 'proxy service disabled', '%s');
+
+my $server_proxy_id = hynsphax_config('proxy_id');
+my $server_proxy_secret = hynsphax_config('proxy_secret');
+
+defined($server_proxy_id) && $server_proxy_id ne '' or
+	_fail(500, 'proxy service misconfigured', '%s - invalid server proxy_id');
+
+defined($server_proxy_secret) && $server_proxy_secret ne '' or
+	_fail(500, 'proxy service misconfigured', '%s - invalid server proxy_secret');
+
+my $q = new CGI();
+
+my $client_proxy_id = $q->param('proxy_id');
+my $client_proxy_secret = $q->param('proxy_secret');
+
+$client_proxy_id eq $server_proxy_id or
+	_fail(401, 'invalid proxy creds', "%s - bad client proxy_id $client_proxy_id");
+$client_proxy_secret eq $server_proxy_secret or
+	_fail(401, 'invalid proxy creds', "%s - bad client proxy_secret");
+
+my $from = $q->param('from');
+defined($from) or
+	_fail(400, 'no from number provided', '%s');
+_logd("from = $from");
+
+my $to = $q->param('to');
+defined($to) or
+	_fail(400, 'no to number provided', '%s');
+_logd("to = $to");
+
+my $fh = $q->param('file');
+defined($fh) or
+	_fail(400, 'no file provided', '%s');
+my $file = $q->tmpFileName($fh);
+_logd("file = $file");
+
+my $magic = File::LibMagic->new();
+my $mime_type = $magic->checktype_filename($file);
+$mime_type =~ s/;.*//;
+$mime_type eq 'image/tiff' or
+	_fail(400, 'invalid file provided', "%s - $mime_type");
+
+my $dbh_hy_queue = dbi_connect(hynsphax_config('db_hy_queue_list'));
+$dbh_hy_queue or
+	_fail(500, 'internal error', 'failed to connect to hy queue db');
+
+my @sendfax_cmd = ('/usr/bin/sendfax', '-N', '-n', '-o', 'hylafax');
+push(@sendfax_cmd, '-S', $from);
+push(@sendfax_cmd, '-d', $to);
+push(@sendfax_cmd, $file);
+
+_logd('running ' . join(' ', @sendfax_cmd));
+
+my ($status, $output) = read_pipe(@sendfax_cmd);
+
+my $job_id;
+
+if ($status < 0) {
+	_fail(500, 'internal error', "sendfax failed to execute");
+}
+elsif ($status != 1) {
+	foreach (@{$output}) {
+		_log("\t$_");
+	}
+
+	_fail(500, 'internal error', "sendfax failed");
+}
+else {
+	foreach (@{$output}) {
+		if (/^request id is (\d+)/) {
+			$job_id = $1;
+			_logd("job id $job_id");
+		}
+		else {
+			_log("warning: unexpected output from sendfax - $_");
+		}
+	}
+	defined($job_id) or
+		_fail('internal error', "no sendfax job id found");
+}
+
+_logd("adding $job_id to outbound hy queue");
+
+my $hy_queue_qh = query($dbh_hy_queue, 'insert into outbound (id, received_time, callback_url, ' .
+				 'last_state, last_status) values (?, ?, ?, ?, ?)',
+				  $job_id, time(), 'proxy:', '?', 'submitted');
+$hy_queue_qh or
+	_log("error: failed to execute outbound hy queue query");
+
+print "Content-type: text/plain\n\nOK\n";
+exit(0);
+
+sub _fail {
+        my ($code, $message, $log) = @_;
+
+        { no if $] >= 5.022, q|warnings|, qw(redundant);
+        _log("error: " . sprintf($log, $message));
+        }
+
+        print "status: $code\nContent-type: text/plain\n\n";
+        print "ERROR: $message\n";
+
+        exit(1);
+}
