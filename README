@@ -341,15 +341,15 @@ destination, which simply discards any incoming faxes.
 Second is the "netsapiens" destination, which routes a fax to a netsapiens
 server. The format for a netsapiens destination is:
 
-	netsapiens:host=<hostname|@hostgroup>,domain=<domain>,user=<user>[,ssl=<0|1>]
+	netsapiens:host=<hostname|@hostgroup>,[port=<port>,]=domain=<domain>,user=<user>[,ssl=<0|1>]
 
 where host is either the netsapiens server name or an @ followed by the name of
-a hostgroup, domain is a valid domain on that server, user is a valid user in
-that domain, and ssl optionally overrides the system default configuration for
-whether or not to use ssl when processing phaxio API calls to netsapiens. If a
-hostgroup is supplied rather than a single host, the entry will be expanded to
-try all hosts in the hostgroup and considered successful if any host in the
-group succeeds.
+a hostgroup, port is an optional port number if not the standard 80/443, domain
+is a valid domain on that server, user is a valid user in that domain, and ssl
+optionally overrides the system default configuration for whether or not to use
+ssl when processing phaxio API calls to netsapiens. If a hostgroup is supplied
+rather than a single host, the entry will be expanded to try all hosts in the
+hostgroup and considered successful if any host in the group succeeds.
 
 For example:
 
@@ -398,10 +398,10 @@ hynsphax server for delivery. The format for a proxy destination is:
 	proxy:host=<hostname|@hostgroup>[,port=<port>][,from=<number>][,to=<number>][,ssl=<0|1>]
 
 where host is either a hynsphax server name or an @ followed by the name of a
-hostgroup, port is an optional port number if not the standard http/https
-ports, from optionally overrides the from number for the fax, to optionally
-overrides the to number for the fax, and ssl optionally overrides the system
-default configuration for whether or not to use ssl when processing proxy calls
+hostgroup, port is an optional port number if not the standard 80/443, from
+optionally overrides the from number for the fax, to optionally overrides the
+to number for the fax, and ssl optionally overrides the system default
+configuration for whether or not to use ssl when processing proxy calls
 to hynsphax servers. If a hostgroup is supplied rather than a single host, the
 entry will be expanded to try all hosts in the hostgroup and considered
 successful if any host in the group succeeds.
