@@ -114,6 +114,10 @@ components:
 	\cp common/hynsphax-common.pl /etc/hylafax/hynsphax-common.pl
 	chmod 444 /etc/hylafax/hynsphax-common.pl
 
+        \cp hylafax/hynsphax-common-fb.pl /etc/hylafax/hynsphax-common-fb.pl
+	chown root:root /etc/hylafax/hynsphax-common-fb.pl
+	chmod 444 /etc/hylafax//hynsphax-common-fb.pl
+
 	# Note - for upgrade, either copy in new config file and restore local
 	#        changes, or apply new configuration options to existing file
 	\cp hylafax/hynsphax.conf /etc/hylafax/hynsphax.conf
@@ -157,10 +161,6 @@ components:
 		chown root:apache /var/www/cgi-bin/fb/$(basename $f)
 		chmod 555 /var/www/cgi-bin/fb/$(basename $f)
 	done
-
-        \cp hylafax/hynsphax-common-fb.pl /etc/hylafax/hynsphax-common-fb.pl
-	chown root:root /etc/hylafax/hynsphax-common-fb.pl
-	chmod 444 /etc/hylafax//hynsphax-common-fb.pl
 
 	# Note - this file enables passing through the client Authorization
 	#        header for the faxback cgis. Depending on your environment,
