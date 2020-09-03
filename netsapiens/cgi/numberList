@@ -128,10 +128,10 @@ while (($number, $city, $state, $cost, $destinations, $provision_date) =
 	if (defined($ns_host) && defined($ns_domain) && defined($ns_user)) {
 		my $callback_url = "http" . ($ssl ? 's' :'') . "://$ns_host/ns-api/?object=phaxio&action=create&" .
 				   "domain=$ns_domain&uid=$ns_user\@$ns_domain";
-		$number_json .= ',"callback_url":"' . json_escape($callback_url);
+		$number_json .= ',"callback_url":"' . json_escape($callback_url) . '"';
 	}
 
-	$number_json .= '"}';
+	$number_json .= '}';
 
 	push(@return_numbers, $number_json);
 }
