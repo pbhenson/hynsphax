@@ -77,7 +77,7 @@ else {
 
 	close(FH);
 
-	logd('request completed');
+	_logd('request completed');
 }
 
 exit(0);
