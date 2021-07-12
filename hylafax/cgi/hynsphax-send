@@ -70,9 +70,18 @@ else {
 
 if (defined($q->param('filename'))) {
 	my $fh = $q->param('filename');
-	$params{filename} = $q->tmpFileName($fh);
-	_logd("filename = $params{filename}");
+	my $tmpfile = $q->tmpFileName($fh);
+	_logd("filename = $tmpfile");
+	push(@{$params{filename}}, $tmpfile);
 	$q->delete('filename')
+}
+elsif (defined($q->param('filename[]'))) {
+	foreach ($q->param('filename[]')) {
+		my $tmpfile = $q->tmpFileName($_);
+		_logd("filename = $tmpfile");
+		push(@{$params{filename}}, $tmpfile);
+	}
+	$q->delete('filename[]')
 }
 else {
 	cgi_fail('You must submit at least one file.', 'no filename supplied');
@@ -138,54 +147,57 @@ defined($mime_type_config) or
 	cgi_fail('internal error', 'failed to load mime_type_config');
 
 my $magic = File::LibMagic->new();
-my $mime_type = $magic->checktype_filename($params{filename});
-$mime_type =~ s/;.*//;
-_logd("mime type = " . $mime_type);
+my @tmpdir_save;
+foreach my $i (0..(@{$params{filename}} - 1)) {
+	my $mime_type = $magic->checktype_filename($params{filename}->[$i]);
+	$mime_type =~ s/;.*//;
+	_logd("mime type = " . $mime_type);
 
-exists($mime_type_config->{$mime_type}) or
-	cgi_fail("file type $mime_type not supported", '%s');
+	exists($mime_type_config->{$mime_type}) or
+		cgi_fail("file type $mime_type not supported", '%s');
 
-my ($mime_processor, $mime_options) = @{$mime_type_config->{$mime_type}};
-_logd("mime processor = " . $mime_processor);
+	my ($mime_processor, $mime_options) = @{$mime_type_config->{$mime_type}};
+	_logd("mime processor = " . $mime_processor);
 
-my $tmpdir;
-if ($mime_processor ne 'hylafax') {
-	$tmpdir = File::Temp->newdir();
+	if ($mime_processor ne 'hylafax') {
+		my $tmpdir = File::Temp->newdir();
+		push(@tmpdir_save, $tmpdir);
 
-	my $vars = { F => $params{filename},
-		     D => $tmpdir,
-		};
+		my $vars = { F => $params{filename}->[$i],
+			     D => $tmpdir,
+			};
 
-	$mime_processor = var_swap($vars, $mime_processor);
+		$mime_processor = var_swap($vars, $mime_processor);
 
-	my @convert_cmd;
-	if (exists($mime_options->{use_shell}) && $mime_options->{use_shell} eq 'true') {
-		_logd("executing $mime_processor under shell");
-		@convert_cmd = ('/usr/bin/bash', '-c', $mime_processor);
-	}
-	else {
-		_logd("executing $mime_processor");
-		@convert_cmd = split(/\s+/, $mime_processor);
-	}
-
-	my ($status, $output) = read_pipe(@convert_cmd);
-
-	if ($status < 0) {
-		cgi_fail('internal error', "convert command $mime_processor failed to execute");
-	}
-
-	$params{filename} = <"$tmpdir/*">;
-	if ($status != 1 || (! -f $params{filename})) {
-		foreach (@{$output}) {
-			_log("\t$_");
+		my @convert_cmd;
+		if (exists($mime_options->{use_shell}) && $mime_options->{use_shell} eq 'true') {
+			_logd("executing $mime_processor under shell");
+			@convert_cmd = ('/usr/bin/bash', '-c', $mime_processor);
+		}
+		else {
+			_logd("executing $mime_processor");
+			@convert_cmd = split(/\s+/, $mime_processor);
 		}
 
-		cgi_fail('internal error', "convert command $mime_processor failed");
-	}
-	else {
-		_logd("new fax file $params{filename}");
-		foreach (@{$output}) {
-			_logd("\t$_");
+		my ($status, $output) = read_pipe(@convert_cmd);
+
+		if ($status < 0) {
+			cgi_fail('internal error', "convert command $mime_processor failed to execute");
+		}
+
+		$params{filename}->[$i] = <"$tmpdir/*">;
+		if ($status != 1 || (! -f $params{filename}->[$i])) {
+			foreach (@{$output}) {
+				_log("\t$_");
+			}
+
+			cgi_fail('internal error', "convert command $mime_processor failed");
+		}
+		else {
+			_logd("new fax file $params{filename}->[$i]");
+			foreach (@{$output}) {
+				_logd("\t$_");
+			}
 		}
 	}
 }
@@ -193,7 +205,7 @@ if ($mime_processor ne 'hylafax') {
 my @sendfax_cmd = ('/usr/bin/sendfax', '-N', '-n', '-o', 'hylafax');
 push(@sendfax_cmd, '-S', $params{caller_id});
 push(@sendfax_cmd, '-d', $params{to});
-push(@sendfax_cmd, $params{filename});
+push(@sendfax_cmd, @{$params{filename}});
 
 _logd('running ' . join(' ', @sendfax_cmd));
 

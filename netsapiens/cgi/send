@@ -36,12 +36,14 @@ my $q = new CGI();
 
 my ($api_key, $api_secret) = cgi_auth($q);
 
-my %post_content = ( api_key => $api_key, api_secret => $api_secret);
+my @post_content;
+push(@post_content, api_key => $api_key);
+push(@post_content, api_secret => $api_secret);
 
 # required parameters
 if (defined($q->param('to'))) {
-	$post_content{to} = $q->param('to');
-	_logd("to = $post_content{to}");
+	_logd("to = " . $q->param('to'));
+	push(@post_content, to => $q->param('to'));
 	$q->delete('to');
 }
 else {
@@ -50,9 +52,16 @@ else {
 
 if (defined($q->param('filename'))) {
 	my $fh = $q->param('filename');
-	$post_content{filename} = [ $fh->filename() ];
-	_logd("filename = $post_content{filename}->[0]");
+	_logd("filename = " . $fh->filename());
+	push(@post_content, filename => [ $fh->filename() ]);
 	$q->delete('filename')
+}
+elsif (defined($q->param('filename[]'))) {
+	foreach ($q->multi_param('filename[]')) {
+		_logd("filename = " . $_->filename());
+		push(@post_content, 'filename[]' => [ $_->filename() ]);
+	}
+	$q->delete('filename[]')
 }
 else {
 	cgi_fail('You must submit at least one file.', 'no filename supplied');
@@ -61,8 +70,8 @@ else {
 # optional parameters
 foreach (qw(callback_url caller_id)) {
 	if (defined($q->param($_))) {
-		$post_content{$_} = $q->param($_);
-		_logd("$_ = $post_content{$_}");
+		_logd("$_ = " . $q->param($_));
+		push(@post_content, $_ => $q->param($_));
 		$q->delete($_);
 	}
 }
@@ -72,8 +81,8 @@ foreach (qw(header_text string_data string_data_type batch batch_delay batch_col
 	    cancel_timeout test_fail)) {
 	if (defined($q->param($_))) {
 		_log("warning: $_ param not currently supported");
-		$post_content{$_} = $q->param($_);
-		_logd("$_ = $post_content{$_}");
+		_logd("$_ = " . $q->param($_));
+		push(@post_content, $_ => $q->param($_));
 		$q->delete($_);
 	}
 }
@@ -81,8 +90,8 @@ foreach (qw(header_text string_data string_data_type batch batch_delay batch_col
 foreach ($q->param()) {
 	if (/^tag\[/) {
 		_log("warning: $_ param not currently supported");
-		$post_content{$_} = $q->param($_);
-		_logd("$_ = $post_content{$_}");
+		_logd("$_ = " . $q->param($_));
+		push(@post_content, $_ => $q->param($_));
 	}
 }
 
@@ -124,7 +133,7 @@ foreach my $node_id (split(/,/, $node_order)) {
 
 	$response = $ua->post("http" . ($ssl ? 's' : '') . "://$hy_server/cgi-bin/hynsphax-send",
 				  Content_Type => 'form-data',
-				  Content => [ %post_content ]);
+				  Content => \@post_content );
 
 	if ($response->is_success()) {
 		_logd("success, content-type " . $response->header("Content-type"));
