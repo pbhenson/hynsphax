@@ -43,7 +43,7 @@ push(@post_content, api_secret => $api_secret);
 # required parameters
 if (defined($q->param('to'))) {
 	_logd("to = " . $q->param('to'));
-	push(@post_content, to => $q->param('to'));
+	push(@post_content, to => scalar($q->param('to')));
 	$q->delete('to');
 }
 else {
@@ -71,7 +71,7 @@ else {
 foreach (qw(callback_url caller_id)) {
 	if (defined($q->param($_))) {
 		_logd("$_ = " . $q->param($_));
-		push(@post_content, $_ => $q->param($_));
+		push(@post_content, $_ => scalar($q->param($_)));
 		$q->delete($_);
 	}
 }
@@ -82,7 +82,7 @@ foreach (qw(header_text string_data string_data_type batch batch_delay batch_col
 	if (defined($q->param($_))) {
 		_log("warning: $_ param not currently supported");
 		_logd("$_ = " . $q->param($_));
-		push(@post_content, $_ => $q->param($_));
+		push(@post_content, $_ => scalar($q->param($_)));
 		$q->delete($_);
 	}
 }
@@ -91,7 +91,7 @@ foreach ($q->param()) {
 	if (/^tag\[/) {
 		_log("warning: $_ param not currently supported");
 		_logd("$_ = " . $q->param($_));
-		push(@post_content, $_ => $q->param($_));
+		push(@post_content, $_ => scalar($q->param($_)));
 	}
 }
 
