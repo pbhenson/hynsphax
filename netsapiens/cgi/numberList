@@ -67,7 +67,8 @@ while (($number, $city, $state, $cost, $destinations, $provision_date) =
 	      (defined($city) ? $city : '') . ', ' .
 	      (defined($state) ? $state : '') . ', ' .
 	      (defined($cost) ? $cost : '') . ', ' .
-	      (defined($destinations) ? $destinations : '') . ', ' . "$provision_date");
+	      (defined($destinations) ? $destinations : '') . ', ' .
+	      (defined($provision_date) ? $provision_date : ''));
 
 	next if ($number eq 'default');
 
