@@ -1,3 +1,5 @@
+PRAGMA journal_mode=WAL;
+
 create table inbound (
 	id varchar not null primary key,
 	received_time int not null,
