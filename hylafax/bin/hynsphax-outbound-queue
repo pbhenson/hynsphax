@@ -16,6 +16,7 @@ use warnings;
 
 use DBI ();
 use File::Copy ();
+use Fcntl ();
 use LWP::UserAgent ();
 use Sys::Hostname ();
 use Unix::Syslog ();
@@ -119,25 +120,25 @@ _logd("server $hostname node_id $node_id");
 
 my $retval;
 
-if (mkdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
-	_logd("processing outbound hy queue");
+if (open(my $lockfile, ">$hf_dir/tmp/hynsphax-send-queue.lock")) {
+	if (flock($lockfile, Fcntl::LOCK_EX | Fcntl::LOCK_NB)) {
+		_logd("processing outbound hy queue");
 
-	$retval = process_queue();
+		$retval = process_queue();
 
-	if (!rmdir("$hf_dir/tmp/hynsphax-send-queue.lock")) {
-		_log("error: failed to remove queue lockfile - $!");
-		$retval = 1;
-	}
-}
-else {
-	if ($! == 17) { # EEXIST
-		_log("warning: queue lockfile exists, skipping run");
-		$retval = 0;
+		flock($lockfile, Fcntl::LOCK_UN) or
+			_log("warning: failed to release queue lock");
 	}
 	else {
-		_log("error: failed to create queue lockfile - $!");
-		$retval = 1;
+		_log("warning: failed to acquire queue lock, skipping run");
+		$retval = 0;
 	}
+	close($lockfile) or
+		_log("warning: failed to close queue lockfile - $!");
+}
+else {
+	_log("error: failed to open queue lockfile - $!");
+	$retval = 1;
 }
 
 exit($retval);
