@@ -31,6 +31,9 @@ my $syslog_facility = hynsphax_config('syslog_facility') // Unix::Syslog::LOG_DA
 Unix::Syslog::openlog('hynsphax-send', Unix::Syslog::LOG_PID, $syslog_facility);
 
 my $hostname = Sys::Hostname::hostname();
+if (defined(hynsphax_config('domain'))) {
+	$hostname .= '.' . hynsphax_config('domain');
+}
 
 my $q = new CGI();
 

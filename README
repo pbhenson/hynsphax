@@ -92,6 +92,11 @@ direct a single URL to the backend servers as appropriate.
 
 * Database
 
+Note: hostname entries in the database must be FQDN's. If the hostname
+on servers is not set to the FQDN, you must set the domain option in
+hynsphax.conf to the appropriate domain to append to the hostname to match
+the FQDN listed in the database.
+
 The configuration database contains a table named “hy_servers” which provides a
 mapping between HylaFAX server host names and two digit node identifiers. For
 each HylaFAX server you have provisioned, assign it a node id and create an

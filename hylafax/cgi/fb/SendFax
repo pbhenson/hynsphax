@@ -41,6 +41,10 @@ $ata->{active} or
 	cgi_fail(403, "ata not active", "%s - $ata->{mac}");
 
 my $hostname = Sys::Hostname::hostname();
+if (defined(hynsphax_config('domain'))) {
+	$hostname .= '.' . hynsphax_config('domain');
+}
+
 my $node_qh = query($dbh_config, 'select node_id from hy_servers where hostname = ?', $hostname);
 $node_qh or
 	cgi_fail(500, 'internal error', 'failed to look up server node');
