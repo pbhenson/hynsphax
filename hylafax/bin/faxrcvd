@@ -474,7 +474,7 @@ sub read_hf_config {
 		my ($var, $value) = split /=/;
 		if (defined($var) && defined ($value)) {
 			$value =~ s/^'//; $value =~ s/'$//;
-			_logd("hylafax $var = $value");
+			_logd("hylafax $var = $value", 2);
 			$hf_conf{$var} = $value;
 		}
 	}
@@ -482,19 +482,19 @@ sub read_hf_config {
 	close(HF_CONF);
 
 	if (!exists($hf_conf{INFO})) {
-		_logd("hylafax adding INFO = " . $hf_conf{SBIN} . '/faxinfo');
+		_logd("hylafax adding INFO = " . $hf_conf{SBIN} . '/faxinfo', 2);
 		$hf_conf{INFO} = $hf_conf{SBIN} . '/faxinfo';
 	}
 	if (!exists($hf_conf{FAX2PS})) {
-		_logd("hylafax adding FAX2PS = " . $hf_conf{TIFFBIN} . '/fax2ps');
+		_logd("hylafax adding FAX2PS = " . $hf_conf{TIFFBIN} . '/fax2ps', 2);
 		$hf_conf{FAX2PS} = $hf_conf{TIFFBIN} . '/fax2ps';
 	}
 	if (!exists($hf_conf{TIFF2PS})) {
-		_logd("hylafax adding TIFF2PS = " . $hf_conf{TIFFBIN} . '/tiff2ps');
+		_logd("hylafax adding TIFF2PS = " . $hf_conf{TIFFBIN} . '/tiff2ps', 2);
 		$hf_conf{TIFF2PS} = $hf_conf{TIFFBIN} . '/tiff2ps';
 	}
 	if (!exists($hf_conf{TIFFINFO})) {
-		_logd("hylafax adding TIFFINFO = " . $hf_conf{TIFFBIN} . '/tiffinfo');
+		_logd("hylafax adding TIFFINFO = " . $hf_conf{TIFFBIN} . '/tiffinfo', 2);
 		$hf_conf{TIFFINFO} = $hf_conf{TIFFBIN} . '/tiffinfo';
 	}
 
