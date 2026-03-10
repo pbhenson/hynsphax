@@ -279,7 +279,7 @@ sub process_entry {
 			}
 
 			if ($cb_status) {
-				_logd("callback succeeded, deleting hy queue entry");
+				_logd("callback successful, deleting hy queue entry");
 				remove_entry($id);
 			}
 			else {
@@ -327,7 +327,7 @@ sub process_entry {
 
 			if ($cb_status) {
 
-				_logd("callback succeeded, deleting hy queue entry");
+				_logd("callback successful, deleting hy queue entry");
 				remove_entry($id);
 			}
 			else {
