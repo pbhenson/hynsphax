@@ -356,19 +356,16 @@ sub process_entry {
 sub generate_pdf {
 	my ($id) = @_;
 
-	my $src_file;
+	my @src_files;
 	if (open(QF, "<$hf_dir/doneq/q$id")) {
 		while (<QF>) {
 			chomp;
-			if (/^!pdf:0::docq\/(.*\.pdf)/) {
-				$src_file = $1;
-				_logd("found pdf file $src_file for id $id");
-				last;
+			if (/^!(pdf|postscript):0::docq\/(.*\.(?:pdf|ps))/) {
+				_logd("found $1 file $2 for id $id");
+				push(@src_files, "$hf_dir/docq/$2");
 			}
-			elsif (/^!postscript:0::docq\/(.*\.ps)/) {
-				$src_file = $1;
-				_logd("found ps file $src_file for id $id");
-				last;
+			elsif (/^!([^:]+):0::docq\/(.*)/) {
+				_log("warning: found unhandled file type $1 $2 in doneq");
 			}
 		}
 		close(QF);
@@ -378,26 +375,32 @@ sub generate_pdf {
 		return;
 	}
 
-	if (!$src_file) {
-		_log("error: no src_file found for id $id");
+	if (@src_files == 0) {
+		_log("error: no src_files found for id $id");
 		return;
 	}
 
 	my $pdf_file = "$hf_dir/doneq-pdf/fax${id}.pdf";
-
 	my ($status, $output);
-	if ($src_file =~ /\.ps$/) {
-		_logd("generating pdf");
-		($status, $output) = read_pipe('/usr/bin/ps2pdf',
-						  "$hf_dir/docq/$src_file",
-						  $pdf_file);
 
+	if (@src_files == 1 && $src_files[0] =~ /\.pdf$/) {
+		_logd("copying pdf");
+		if (!File::Copy::copy($src_files[0], $pdf_file)) {
+			_logp("error: failed to copy $src_files[0] to $pdf_file - $!");
+			return;
+		}
+	}
+	else {
+		_logd("generating pdf");
+		($status, $output) = read_pipe('/usr/bin/gs', '-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite',
+										"-sOutputFile=$pdf_file", @src_files);
 		if ($status < 0) {
-			_logp("error: ps2pdf on $src_file failed to execute");
+			_logp("error: gs for fax id $id failed to execute");
 			return;
 		}
 		elsif ($status != 1) {
-			_logp("error: ps2pdf on $src_file failed");
+			_logp("error: gs for fax id $id failed");
+			_logp("\tfilenames: " . join(',', @src_files));
 			foreach (@{$output}) {
 				_logp("\t$_");
 			}
@@ -405,15 +408,8 @@ sub generate_pdf {
 		}
 		else {
 			foreach (@{$output}) {
-				_log("warning: unexpected output from ps2pdf on $src_file - $_");
+				_log("warning: unexpected output from gs for fax id $id - $_");
 			}
-		}
-	}
-	else {
-		_logd("copying existing pdf");
-		if (!File::Copy::copy("$hf_dir/docq/$src_file", $pdf_file)) {
-			_logp("error: failed to copy $src_file to $pdf_file - $!");
-			return;
 		}
 	}
 
