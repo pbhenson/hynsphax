@@ -154,7 +154,7 @@ sub var_swap {
 			_log("warning: var $var_name not defined, using empty string");
 			$sub = '';
 		}
-		$val =~ s/\Q${lead_char}\E\${\Q${var_name}\E}/${lead_char}${sub}/;
+		$val =~ s/\Q${lead_char}\E\$\{\Q${var_name}\E\}/${lead_char}${sub}/;
 	}
 
 	return $val;
