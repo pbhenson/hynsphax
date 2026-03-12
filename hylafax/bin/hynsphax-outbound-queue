@@ -347,9 +347,13 @@ sub process_entry {
 		}
 	}
 	else {
-		_log("error: pending hy queue id $id not found on system, removing");
-
-		remove_entry($id);
+		if ($now - $received_time > 300) {
+			_log("error: pending hy queue id $id ($received_time) not found on system, removing");
+			remove_entry($id);
+		}
+		else {
+			_logd("pending hy queue id $id ($received_time) not (yet?) found on system, skipping");
+		}
 	}
 }
 
