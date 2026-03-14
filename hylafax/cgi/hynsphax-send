@@ -79,7 +79,7 @@ if (defined($q->param('filename'))) {
 	$q->delete('filename')
 }
 elsif (defined($q->param('filename[]'))) {
-	foreach ($q->param('filename[]')) {
+	foreach ($q->multi_param('filename[]')) {
 		my $tmpfile = $q->tmpFileName($_);
 		_logd("filename = $tmpfile");
 		push(@{$params{filename}}, $tmpfile);
