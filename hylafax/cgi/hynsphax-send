@@ -182,6 +182,15 @@ foreach my $i (0..(@{$params{filename}} - 1)) {
 			@convert_cmd = split(/\s+/, $mime_processor);
 		}
 
+		if (exists($mime_options->{setenv})) {
+			if (ref($mime_options->{setenv}) eq 'HASH') {
+				unshift(@convert_cmd, $mime_options->{setenv});
+			}
+			else {
+				_log("warning: setenv option for $mime_type not hash, ignoring");
+			}
+		}
+
 		my ($status, $output) = read_pipe(@convert_cmd);
 
 		if ($status < 0) {

@@ -52,6 +52,12 @@ sub safe_pipe {
 			return $fh;
 		}
 		else {
+			if (ref($command) eq 'HASH') {
+				while (my ($key, $value) = each(%{$command})) {
+					$ENV{$key} = $value;
+				}
+				$command = shift(@options);
+			}
 			open(STDERR, ">&STDOUT");
 			exec($command, @options);
 			exit(1);
