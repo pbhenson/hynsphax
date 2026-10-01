@@ -32,7 +32,7 @@ sub _logd {
 
 	return unless $debug >= $level;
 
-	_log($message);
+	_log("(debug-$level) " . $message);
 }
 
 sub _logp {
